@@ -202,3 +202,20 @@ test('에이전트 감지: edb-p·delegate codex exec·맨 claude -p 는 잡고,
     { who: 'claude', name: 'claude -p', desc: '이 함수 테스트 써줘 --permission-mode bypassPermissions', age: '방금', lane: 'DevOps1' },
   ])
 })
+
+test('/workers 는 에이전트 패널을 열고 다시 부르면 닫는다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', () => { panes = []; return { value: undefined } })
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }, { id: 'a2', type: 'explore', description: '끝남', status: 'completed' }] }))
+  await status($, on)
+  const r: any = await $.command.run({ command: 'workers', args: '' } as any)
+  expect(panes).toEqual([{ id: 'agents' }])
+  expect(r.text).toBe('에이전트 1개 — /workers 다시 입력하면 닫힘')
+  const r2: any = await $.command.run({ command: 'workers', args: '' } as any)
+  expect(panes).toEqual([])
+  expect(r2.text).toBe('에이전트 패널을 닫았습니다')
+})

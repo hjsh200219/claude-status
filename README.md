@@ -43,6 +43,7 @@ Claude Code 에서:
 명령:
 
 ```
+/workers                     에이전트 패널 열기·닫기
 /loops                       열린 일 패널 열기·닫기(종류별 · 요약 + 나이·누가·키)
 /loops add deploy-check 내일 09시 배포 결과 확인
 /loops close deploy-check

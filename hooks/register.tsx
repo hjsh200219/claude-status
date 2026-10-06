@@ -302,9 +302,13 @@ async function scanAgents($: EngineInterface) {
 
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
 async function toggleAgents($: EngineInterface) {
-  if ((await $.ui.panes()).some(x => x.id === AGENTS)) return void (await $.ui.close({ id: AGENTS }))
+  if ((await $.ui.panes()).some(x => x.id === AGENTS)) {
+    await $.ui.close({ id: AGENTS })
+    return '에이전트 패널을 닫았습니다'
+  }
   const n = (await scanAgents($)).length
   await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true })
+  return `에이전트 ${n}개 — /workers 다시 입력하면 닫힘`
 }
 
 async function togglePane($: EngineInterface) {
@@ -352,6 +356,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
+    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
       name: 'open_loop_add',
@@ -376,6 +381,8 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
+
+  on('command.run', { command: 'workers' }, async $ => ({ text: await toggleAgents($) }))
 
   on('command.run', { command: 'loops' }, async ($, e) => {
     const [verb, key, ...rest] = e.args.trim().split(/\s+/)
@@ -430,7 +437,7 @@ export const register: Register = on => {
             ))}
           </Box>
         ))}
-        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: 버튼 다시 · ✕</Text>
+        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: /workers 다시 · 버튼 · ✕</Text>
       </Box>
     )
   })
