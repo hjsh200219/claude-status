@@ -221,6 +221,17 @@ export async function editWarning($: EngineInterface, w: Where, me: string, p: s
   return msg
 }
 
+// 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
+async function togglePane($: EngineInterface) {
+  if ((await $.ui.panes()).some(x => x.id === PANE)) {
+    await $.ui.close({ id: PANE })
+    return '열린 일 패널을 닫았습니다'
+  }
+  const n = (await read($, rows)).length
+  await $.ui.open({ id: PANE, title: `열린 일 ${n}`, closeOnEscape: true })
+  return `열린 일 ${n}건 — /loops 다시 입력하면 닫힘`
+}
+
 // ── 상태줄 ──────────────────────────────────────────────────────────────────
 async function refresh($: EngineInterface, cwd: string) {
   const home = cwd.match(/^\/Users\/[^/]+/)?.[0]
@@ -284,13 +295,19 @@ export const register: Register = on => {
     await refresh($, await $.session.cwd())
     if (verb === 'add' || verb === 'close') return { text }
     // 인자 없이 다시 부르면 닫는다(✕ 를 누르거나 패널에서 Esc 로도 닫힌다)
-    if ((await $.ui.panes()).some(x => x.id === PANE)) {
-      await $.ui.close({ id: PANE })
-      return { text: '열린 일 패널을 닫았습니다' }
-    }
+    return { text: await togglePane($) }
+  })
+
+  // 입력창 위 버튼 — 상태줄 글자는 누를 수 없어서 누르는 자리는 여기
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const n = (await read($, rows)).length
-    await $.ui.open({ id: PANE, title: `열린 일 ${n}`, closeOnEscape: true })
-    return { text: `열린 일 ${n}건 — /loops 다시 입력하면 닫힘` }
+    if (!n || e.props.hasSurvey) return next(e)
+    const { Box, Button } = $.ui.resolve(e)
+    return (
+      <Box>
+        <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />
+      </Box>
+    )
   })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {

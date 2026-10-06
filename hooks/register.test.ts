@@ -158,3 +158,22 @@ test('/loops 는 패널을 열고(종류·나이·누가·키) 다시 부르면 
   expect(closed).toMatchObject({ id: 'open-loops' })
   expect(r2.text).toBe('열린 일 패널을 닫았습니다')
 })
+
+test('입력창 위 「열린 일 N」 버튼을 누르면 패널이 열리고 다시 누르면 닫힌다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  g.w.files.set(`${DIR}/items/a.json`, JSON.stringify({ key: 'a', kind: 'note', ts: 1, text: '배포 뒤 확인' }))
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', () => { panes = []; return { value: undefined } })
+  await status($, on)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    panes = []
+    await ($ as any).ui.mount({ plugin: 'status', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } })
+    await ($ as any).ui.press({ plugin: 'status', key: 'loops', surface })
+    expect(panes).toEqual([{ id: 'open-loops' }])
+    await ($ as any).ui.press({ plugin: 'status', key: 'loops', surface })
+    expect(panes).toEqual([])
+  }
+})
