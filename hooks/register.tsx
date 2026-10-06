@@ -51,10 +51,11 @@ const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
   where ??= (async () => {
-    const r = await $.process.run(['sh', '-c', 'printf "%s\\n%s" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME"'])
-    const [cfg, home] = r.stdout.split('\n')
+    // META_STATUS_NO_LEGACY=1 이면 원본 스크립트가 있어도 mod 장부를 쓴다(데모·시험용)
+    const r = await $.process.run(['sh', '-c', 'printf "%s\\n%s\\n%s" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME" "${META_STATUS_NO_LEGACY:-}"'])
+    const [cfg, home, noLegacy] = r.stdout.split('\n')
     const cli = `${home}/workspace/scripts/open-loops.py`
-    return { dir: `${cfg}/open-loops`, legacy: (await $.fs.exists(cli)) ? cli : undefined }
+    return { dir: `${cfg}/open-loops`, legacy: !noLegacy && (await $.fs.exists(cli)) ? cli : undefined }
   })()
   return where
 }
@@ -310,8 +311,15 @@ function ordered(list: readonly Row[]) {
 // 「129시간 전」 → 「5일」 · 「3시간 전」 → 「3시간」 · 「12분 전」 → 「12분」
 function shortAge(age: string) {
   const h = age.match(/^(\d+)시간/)
-  if (h && Number(h[1]) >= 48) return `${Math.round(Number(h[1]) / 24)}일`
+  if (h && Number(h[1]) >= 24) return `${Math.floor(Number(h[1]) / 24)}일`
   return age.replace(/ 전$/, '')
+}
+
+// 터미널 칸 폭(한글·전각 2칸)으로 오른쪽을 채운다 — padEnd 는 글자 수라 한글이 어긋난다
+function padCells(x: string, n: number) {
+  let w = 0
+  for (const c of x) w += /[\u1100-\u11ff\u3000-\u9fff\uac00-\ud7af\uff00-\uffef]/.test(c) ? 2 : 1
+  return x + ' '.repeat(Math.max(0, n - w))
 }
 
 // 요약 한 줄: « — » 앞 구절, 괄호 속 ID·경로는 뺀다
@@ -323,8 +331,10 @@ async function toggleAgents($: EngineInterface) {
     await $.ui.close({ id: AGENTS })
     return '에이전트 패널을 닫았습니다'
   }
-  const n = (await scanAgents($)).length
-  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true })
+  const list = await scanAgents($)
+  const n = list.length
+  const want = n * 2 + new Set(list.map(a => a.who)).size * 2 + 2
+  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true, rows: Math.min(24, want) })
   return `에이전트 ${n}개 — /workers 다시 입력하면 닫힘`
 }
 
@@ -333,8 +343,11 @@ async function togglePane($: EngineInterface) {
     await $.ui.close({ id: PANE })
     return '열린 일 패널을 닫았습니다'
   }
-  const n = (await read($, rows)).length
-  await $.ui.open({ id: PANE, title: `열린 일 ${n}`, closeOnEscape: true })
+  const list = await read($, rows)
+  const n = list.length
+  // 내용 높이만큼 연다(항목 + 묶음마다 제목·빈 줄 + 안내 줄) — 기본 높이는 끝이 잘린다
+  const want = n + ordered(list).length * 2 + 2
+  await $.ui.open({ id: PANE, title: `열린 일 ${n}`, closeOnEscape: true, rows: Math.min(24, want) })
   return `열린 일 ${n}건 — /loops 다시 입력하면 닫힘`
 }
 
@@ -399,7 +412,10 @@ export const register: Register = on => {
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
 
-  on('command.run', { command: 'workers' }, async $ => ({ text: await toggleAgents($) }))
+  on('command.run', { command: 'workers' }, async $ => {
+    await refresh($, await $.session.cwd())
+    return { text: await toggleAgents($) }
+  })
 
   on('command.run', { command: 'loops' }, async ($, e) => {
     const [verb, key, ...rest] = e.args.trim().split(/\s+/)
@@ -484,7 +500,7 @@ export const register: Register = on => {
               i += 1
               return (
                 <Box flexDirection="row" gap={1}>
-                  <Text dimColor>{String(i).padStart(2)} {shortAge(r.age).padEnd(5)}</Text>
+                  <Text dimColor>{String(i).padStart(2)} {padCells(shortAge(r.age), 6)}</Text>
                   <Text wrap="truncate-end">{brief(r.text)}</Text>
                 </Box>
               )
@@ -583,6 +599,8 @@ export const register: Register = on => {
   // 세션 시작 안내(session-brief): 다른 세션이 남긴 열린 일을 6줄 이내로 문맥에 넣는다
   on('classic.SessionStart', async ($, e, next) => {
     const r = await next(e)
+    // /clear 는 세션 상태를 비우는데 session.start 는 다시 오지 않는다 — 여기서 입력창 위 줄을 다시 채운다
+    await refresh($, e.cwd).catch(() => undefined)
     const w = await locate($)
     if (w.legacy) return r
     const t = await now($)
