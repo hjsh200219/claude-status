@@ -56,8 +56,8 @@ Claude Code 에서:
 ## 에이전트
 
 - 이 세션의 서브에이전트(Agent 도구) — 계정은 HUD 가 남긴 레인 계정, 없으면 `claude`
-- 이 Mac 에서 도는 위임: `edb-p`(edb) · `delegate` · `codex exec` · 그 밖의 `claude -p`
-- 빼는 것: oh-my-claudecode HUD 요약이 띄우는 `claude -p`, ChatGPT 앱 등 상주 Codex, 위임 안에서 다시 뜬 것
+- 이 세션이 띄운 위임: `edb-p`(edb) · `delegate` · `codex exec` · 그 밖의 `claude -p`
+- 빼는 것: 다른 세션(레인)이 띄운 위임, oh-my-claudecode HUD 요약이 띄우는 `claude -p`, ChatGPT 앱 등 상주 Codex, 위임 안에서 다시 뜬 것
 - 도구 호출·턴이 끝날 때마다 다시 읽습니다. 명령줄의 작업 원문은 화면에만 60자로 보이고 모델 문맥엔 넣지 않습니다.
 
 ## 한계

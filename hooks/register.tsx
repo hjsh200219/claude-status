@@ -42,7 +42,7 @@ const rows = atom({ plugin: 'meta-status', key: 'rows' } as const, [] as Row[])
 const head = atom({ plugin: 'meta-status', key: 'head' } as const, '')
 // OMC HUD 의 세션 요약(OMC 가 10턴마다 만든다 · 없는 PC 는 빈 값)
 const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
-// 지금 도는 에이전트(이 세션의 서브에이전트 + 이 Mac 의 edb-p·claude-as·codex exec)
+// 지금 도는 에이전트(이 세션의 서브에이전트 + 이 세션이 띄운 edb-p·claude-as·codex exec)
 const AGENTS = 'agents'
 type Agent = { who: string; name: string; desc: string; age: string; lane: string }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
@@ -246,7 +246,8 @@ const clean = (x: string, n: number) => x.replace(/[\r\n\t]+/g, ' ').replace(/[`
 // 잡는 것: edb-p·claude-as·delegate 아래의 `claude -p`, `codex exec`. 버리는 것: OMC HUD 요약(session-summary)이
 // 띄우는 `claude -p`, 상주 Codex(app-server·TUI), 다른 위임 안에서 다시 뜬 것(맨 위 하나만 센다).
 // 명령줄엔 작업 원문이 있어 화면에만 60자로 자르고 문맥엔 넣지 않는다.
-export function parsePs(ps: string, panes: string): Agent[] {
+// me(이 mod 가 띄운 sh 의 부모 pid)를 주면 그 위 가장 가까운 claude 세션 프로세스 아래 것만 남긴다 — 다른 레인 것은 뺀다.
+export function parsePs(ps: string, panes: string, me?: number): Agent[] {
   const procs = new Map<number, { ppid: number; etime: string; cmd: string }>()
   for (const l of ps.split('\n')) {
     const m = l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
@@ -260,6 +261,11 @@ export function parsePs(ps: string, panes: string): Agent[] {
   const base = (cmd: string) => (cmd.split(' ')[0] ?? '').split('/').pop() ?? ''
   const isClaudeP = (cmd: string) => base(cmd) === 'claude' && /\s-p(\s|$)/.test(cmd)
   const isCodexExec = (cmd: string) => base(cmd) === 'codex' && /^\S+\s+exec(\s|$)/.test(cmd)
+  let root = me
+  for (let q = me, i = 0; q && procs.has(q) && i < 30; q = procs.get(q)!.ppid, i++) {
+    const c = procs.get(q)!.cmd
+    if (base(c) === 'claude' && !isClaudeP(c)) { root = q; break }
+  }
   const out: Agent[] = []
   for (const [pid, p] of procs) {
     const claude = isClaudeP(p.cmd)
@@ -269,6 +275,7 @@ export function parsePs(ps: string, panes: string): Agent[] {
     const up = chain.map(c => c.cmd).join('\n')
     if (/session-summary|omc-hud|account-line/.test(up)) continue
     if (chain.some(c => isClaudeP(c.cmd) || isCodexExec(c.cmd))) continue // 위임 안의 위임은 맨 위만
+    if (root && !chain.some(c => c.pid === root)) continue // 다른 세션이 띄운 것
     const lane = chain.map(c => lanes.get(c.pid)).find(Boolean) ?? ''
     const via = /(^|\/)delegate(\s|$)/m.test(up) ? 'delegate' : ''
     if (claude) {
@@ -286,8 +293,8 @@ export function parsePs(ps: string, panes: string): Agent[] {
 }
 
 async function scanAgents($: EngineInterface) {
-  const r = await $.process.run(['sh', '-c', 'ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null']).catch(() => undefined)
-  const [ps = '', panes = '', acct = ''] = (r?.stdout ?? '').split('@@\n')
+  const r = await $.process.run(['sh', '-c', 'echo $PPID; echo @@; ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null']).catch(() => undefined)
+  const [me = '', ps = '', panes = '', acct = ''] = (r?.stdout ?? '').split('@@\n')
   const t = await now($)
   // 이 세션의 서브에이전트 — 레인 계정은 HUD 가 남긴 기록(없으면 claude)
   const mine = (await $.agent.list().catch(() => [])).filter(a => ['running', 'pending', 'waiting'].includes(a.status))
@@ -295,7 +302,7 @@ async function scanAgents($: EngineInterface) {
   const who = acct.trim().split(/\s+/)[0] || 'claude'
   const list: Agent[] = [
     ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션' })),
-    ...parsePs(ps, panes),
+    ...parsePs(ps, panes, Number(me) || undefined),
   ]
   await update($, agents, () => list)
   return list

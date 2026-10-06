@@ -180,7 +180,7 @@ test('입력창 위 「열린 일 N」 버튼을 누르면 패널이 열리고 �
   }
 })
 
-test('에이전트 감지: edb-p·delegate codex exec·맨 claude -p 는 잡고, HUD 요약·상주 Codex·위임 안의 위임은 버린다', () => {
+test('에이전트 감지: 이 세션의 edb-p·delegate codex exec·맨 claude -p 는 잡고, 다른 세션·HUD 요약·상주 Codex·위임 안의 위임은 버린다', () => {
   const ps = [
     '  100     1 05:00:00 /x/claude-fixed/claude --resume abc --remote-control',          // 레인(DevOps1)
     '  200   100    12:00 /bin/zsh -c source snapshot; python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘',
@@ -194,9 +194,14 @@ test('에이전트 감지: edb-p·delegate codex exec·맨 claude -p 는 잡고,
     '  401   400    02:59 /x/codex exec -C /h/workspace/pillcheck-app --skip-git-repo-check -s workspace-write -o /tmp/o.md -', // codex
     '  500     1 2-09:54:47 /Applications/ChatGPT.app/x/codex app-server --listen stdio://',   // 상주 → 버림
     '  600   100    00:40 /x/claude-fixed/claude -p 이 함수 테스트 써줘 --permission-mode bypassPermissions', // claude-as/맨 claude -p
+    '  700     1 05:00:00 /x/claude-fixed/claude --resume def',                                 // 다른 레인(DevOps2)
+    '  701   700    03:00 /bin/zsh -c source snapshot; python3 /h/.local/bin/edb-p 남의 작업',
+    '  702   701    03:00 /x/claude-fixed/claude -p 남의 작업',                                     // 다른 세션 → me 를 주면 버림
+    '  800   100    00:00 sh -c echo $PPID',                                                     // mod 가 띄운 sh
   ].join('\n')
-  const panes = '100 DevOps1\n'
-  expect(parsePs(ps, panes)).toEqual([
+  const panes = '100 DevOps1\n700 DevOps2\n'
+  expect(parsePs(ps, panes).map(a => a.lane)).toContain('DevOps2')
+  expect(parsePs(ps, panes, 100)).toEqual([
     { who: 'edb', name: 'edb-p', desc: '필첵 PRD 검토해줘', age: '11분', lane: 'DevOps1' },
     { who: 'codex', name: 'delegate', desc: 'pillcheck-app', age: '2분', lane: 'DevOps1' },
     { who: 'claude', name: 'claude -p', desc: '이 함수 테스트 써줘 --permission-mode bypassPermissions', age: '방금', lane: 'DevOps1' },
