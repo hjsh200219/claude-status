@@ -40,6 +40,8 @@ type Row = { kind: string; age: string; who: string; text: string; key: string }
 const rows = atom({ plugin: 'status', key: 'rows' } as const, [] as Row[])
 // 입력창 위 줄의 repo 부분(repo · 브랜치 ↑✎)
 const head = atom({ plugin: 'status', key: 'head' } as const, '')
+// OMC HUD 의 세션 요약(OMC 가 10턴마다 만든다 · 없는 PC 는 빈 값)
+const summary = atom({ plugin: 'status', key: 'summary' } as const, '')
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
@@ -258,7 +260,10 @@ async function refresh($: EngineInterface, cwd: string) {
   // 폴더는 git repo 밖일 때만 — repo 안에선 repo·브랜치로 충분하다
   const where = [repo ? '' : dir, repo, [branch, marks].filter(Boolean).join(' ')].filter(Boolean).join(' · ')
   await update($, head, () => where)
-  return [where, open].filter(Boolean).join(' · ')
+  const sum = await readJson<{ summary?: string }>($, `${await $.session.root()}/.omc/state/session-summary-${await $.session.id()}.json`)
+  const note = (sum?.summary ?? '').replace(/[\r\n]+/g, ' ').slice(0, 40)
+  await update($, summary, () => note)
+  return [where, open, note].filter(Boolean).join(' · ')
 }
 
 export const register: Register = on => {
@@ -305,13 +310,15 @@ export const register: Register = on => {
   // 상태줄($.ui.status)은 앞에 「⚠ 플러그인 이름:」이 붙고 누를 수 없어 쓰지 않는다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const where = await read($, head)
+    const sum = await read($, summary)
     const n = (await read($, rows)).length
-    if ((!where && !n) || e.props.hasSurvey) return next(e)
+    if ((!where && !n && !sum) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
       <Box flexDirection="row" gap={1}>
         {where && <Text dimColor>{where}</Text>}
         {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
+        {sum && <Text dimColor>· {sum}</Text>}
       </Box>
     )
   })

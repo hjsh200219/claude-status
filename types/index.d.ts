@@ -3,6 +3,7 @@ declare module 'claude-code' {
     status: {
       rows: { kind: string; age: string; who: string; text: string; key: string }[]
       head: string
+      summary: string
     }
   }
 }

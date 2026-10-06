@@ -3,7 +3,7 @@
 Claude Code 입력창 위에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
 ```
-workspace · main ↑2 ✎3  [열린 일 3]
+workspace · main ↑2 ✎3  [열린 일 3]  · 세션 요약
 ```
 
 | 표시 | 뜻 |
@@ -12,6 +12,7 @@ workspace · main ↑2 ✎3  [열린 일 3]
 | `↑2` | push 안 한 커밋 수 (0이면 숨김) |
 | `✎3` | 수정·새 파일 수 (0이면 숨김) |
 | `[열린 일 3]` | 끝내지 못한 일 개수 버튼 — 누르거나 `/loops` 로 목록 패널 열기·닫기 |
+| `· 세션 요약` | oh-my-claudecode 가 만든 세션 요약(OMC `sessionSummary` 를 켠 PC 만) |
 
 ## 설치
 

@@ -34,6 +34,7 @@ function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) 
       on('tool.register', () => ({ value: { tool: 'x' } }))
       on('clock.now', () => ({ value: w.clock }))
       on('session.id', () => ({ value: 'me-session' }))
+      on('session.root', () => ({ value: '/h/workspace' }))
       on('session.cwd', () => ({ value: opts.cwd ?? '/h/workspace' }))
       on('process.run', ($: any, e: any) => ({ value: run(e.argv) }))
       on('fs.exists', ($: any, e: any) => ({ value: opts.legacy ? true : files.has(e.path) }))
@@ -73,11 +74,12 @@ test('repo 밖: 폴더만', async ($, on) => {
   expect(((await $.command.run({ command: 'where', args: '' } as any)) as any).text).toBe('/tmp/x')
 })
 
-test('전환 모드: 원본 스크립트 장부를 읽는다', async ($, on) => {
+test('전환 모드: 원본 스크립트 장부를 읽는다 · OMC 요약이 있으면 줄 끝에', async ($, on) => {
   const g = world({ legacy: true })
   g.install(on)
+  g.w.files.set('/h/workspace/.omc/state/session-summary-me-session.json', JSON.stringify({ summary: 'status 입력창 위로' }))
   const shown = await status($, on)
-  expect(await shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 3')
+  expect(await shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 3 · status 입력창 위로')
 })
 
 test('Stop 이 미커밋·미푸시를 남기고, git 이 깨끗해지면 스스로 닫힌다', async ($, on) => {
