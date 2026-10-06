@@ -38,6 +38,8 @@ let where: Promise<Where> | undefined
 const PANE = 'open-loops'
 type Row = { kind: string; age: string; who: string; text: string; key: string }
 const rows = atom({ plugin: 'status', key: 'rows' } as const, [] as Row[])
+// 입력창 위 줄의 repo 부분(repo · 브랜치 ↑✎)
+const head = atom({ plugin: 'status', key: 'head' } as const, '')
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
@@ -232,7 +234,7 @@ async function togglePane($: EngineInterface) {
   return `열린 일 ${n}건 — /loops 다시 입력하면 닫힘`
 }
 
-// ── 상태줄 ──────────────────────────────────────────────────────────────────
+// ── 입력창 위 줄 ──────────────────────────────────────────────────────────────────
 async function refresh($: EngineInterface, cwd: string) {
   const home = cwd.match(/^\/Users\/[^/]+/)?.[0]
   const dir = home ? '~' + cwd.slice(home.length) : cwd
@@ -254,9 +256,9 @@ async function refresh($: EngineInterface, cwd: string) {
   await update($, rows, () => items.map(it => ({ kind: KINDS[it.kind ?? ''] ?? it.kind ?? '기타', key: it.key, ...parts(it, t) })))
   const open = items.length ? `열린 일 ${items.length}` : ''
   // 폴더는 git repo 밖일 때만 — repo 안에선 repo·브랜치로 충분하다
-  const text = [repo ? '' : dir, repo, [branch, marks].filter(Boolean).join(' '), open].filter(Boolean).join(' · ')
-  $.ui.status(text)
-  return text
+  const where = [repo ? '' : dir, repo, [branch, marks].filter(Boolean).join(' ')].filter(Boolean).join(' · ')
+  await update($, head, () => where)
+  return [where, open].filter(Boolean).join(' · ')
 }
 
 export const register: Register = on => {
@@ -274,6 +276,7 @@ export const register: Register = on => {
       description: '확인을 마친 열린 일을 키로 닫는다.',
       inputSchema: { type: 'object', properties: { key: { type: 'string' }, note: { type: 'string' } }, required: ['key'] },
     })
+    $.ui.status(undefined)
     await refresh($, r.cwd)
     return r
   })
@@ -298,14 +301,17 @@ export const register: Register = on => {
     return { text: await togglePane($) }
   })
 
-  // 입력창 위 버튼 — 상태줄 글자는 누를 수 없어서 누르는 자리는 여기
+  // 입력창 위 한 줄: repo · 브랜치 ↑✎ + 「열린 일 N」 버튼(누르면 패널 열기·닫기)
+  // 상태줄($.ui.status)은 앞에 「⚠ 플러그인 이름:」이 붙고 누를 수 없어 쓰지 않는다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
+    const where = await read($, head)
     const n = (await read($, rows)).length
-    if (!n || e.props.hasSurvey) return next(e)
-    const { Box, Button } = $.ui.resolve(e)
+    if ((!where && !n) || e.props.hasSurvey) return next(e)
+    const { Box, Text, Button } = $.ui.resolve(e)
     return (
-      <Box>
-        <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />
+      <Box flexDirection="row" gap={1}>
+        {where && <Text dimColor>{where}</Text>}
+        {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
       </Box>
     )
   })

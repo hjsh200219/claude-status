@@ -1,9 +1,9 @@
-# status — Claude Code 상태줄 + 열린 일 장부
+# status — Claude Code 입력창 위 repo 줄 + 열린 일 장부
 
-Claude Code 입력창 아래에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
+Claude Code 입력창 위에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
 ```
-⚠ status: workspace · main ↑2 ✎3 · 열린 일 3
+workspace · main ↑2 ✎3  [열린 일 3]
 ```
 
 | 표시 | 뜻 |
@@ -11,7 +11,7 @@ Claude Code 입력창 아래에 지금 작업 중인 repo 상태와 끝내지 �
 | `workspace · main` | origin repo 이름 · 브랜치 (repo 밖이면 폴더) |
 | `↑2` | push 안 한 커밋 수 (0이면 숨김) |
 | `✎3` | 수정·새 파일 수 (0이면 숨김) |
-| `열린 일 3` | 끝내지 못한 일 개수 — 입력창 위 `열린 일 3` 버튼을 누르거나 `/loops` 로 목록 패널 |
+| `[열린 일 3]` | 끝내지 못한 일 개수 버튼 — 누르거나 `/loops` 로 목록 패널 열기·닫기 |
 
 ## 설치
 
@@ -44,15 +44,14 @@ Claude Code 에서:
 /loops                       열린 일 패널 열기·닫기(종류별 · 요약 + 나이·누가·키)
 /loops add deploy-check 내일 09시 배포 결과 확인
 /loops close deploy-check
-/where                            상태줄 다시 읽기
+/where                            입력창 위 줄 다시 읽기
 ```
 
 장부 위치: `~/.claude/open-loops/` (항목 하나 = 파일 하나라 세션 여러 개가 동시에 써도 안전).
 
 ## 한계
 
-- 상태줄 글자는 누를 수 없어 목록은 입력창 위 버튼이나 `/loops` 로 엽니다. 터미널 폭이 110칸 미만이면 패널이 옆이 아니라 대화 안에 열립니다. 「누가」 칸은 tmux 세션 이름, 없으면 세션 id 앞 8자리.
+- 설문이 떠 있는 동안은 입력창 위 줄이 비켜 줍니다. 터미널 폭이 110칸 미만이면 패널이 옆이 아니라 대화 안에 열립니다. 「누가」 칸은 tmux 세션 이름, 없으면 세션 id 앞 8자리.
 
 - `sed`·스크립트로 고친 파일은 편집 기록에 안 남습니다(Edit·Write·MultiEdit·NotebookEdit 만).
-- 상태줄은 Claude 모바일 앱(Remote Control)에는 보이지 않습니다.
-- 상태줄 앞 `⚠ status:` 표시는 Claude Code 가 그리는 플러그인 이름표라 끌 수 없습니다.
+- 입력창 위 줄은 Claude 모바일 앱(Remote Control)에는 보이지 않습니다.
