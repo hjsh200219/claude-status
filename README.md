@@ -43,8 +43,7 @@ Claude Code 에서:
 명령:
 
 ```
-/workers                     에이전트 패널 열기·닫기
-/workers --detail            자세히: 서브에이전트의 마지막 말·최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중, 걸린 시간)·총 횟수 · edb-p·codex 는 pid·명령줄 전체
+/workers                     에이전트 패널 열기·닫기 — 서브에이전트의 마지막 말·최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중, 걸린 시간)·총 횟수 · edb-p·codex 는 pid·명령줄 전체
 /loops                       열린 일 패널 열기·닫기(레인별 · 최신 위 · 번호 · 나이 · 요약 한 줄)(종류별 · 요약 + 나이·누가·키)
 /loops add deploy-check 내일 09시 배포 결과 확인
 /loops close deploy-check      키로 닫기

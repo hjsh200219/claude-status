@@ -48,7 +48,6 @@ type Agent = { who: string; name: string; desc: string; age: string; lane: strin
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
 const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
-let detailed = false // /workers --detail 로 연 패널이면 줄마다 자세히(mod 를 다시 읽으면 짧게로 돌아간다)
 
 // 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중) · 총 횟수
 async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
@@ -326,7 +325,7 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
   return out
 }
 
-async function scanAgents($: EngineInterface) {
+async function scanAgents($: EngineInterface, paneOpen?: boolean) {
   const r = await $.process.run(['sh', '-c', 'echo $PPID; echo @@; ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null']).catch(() => undefined)
   const [me = '', ps = '', panes = '', acct = ''] = (r?.stdout ?? '').split('@@\n')
   const t = await now($)
@@ -339,11 +338,9 @@ async function scanAgents($: EngineInterface) {
     ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
     ...parsePs(ps, panes, Number(me) || undefined),
   ]
-  // 자세히는 패널을 --detail 로 열었을 때만 — 도구 호출마다 도는 곳이라 평소엔 기록을 읽지 않는다
-  for (const a of list) {
-    if (!detailed) delete a.detail
-    else if (a.id) a.detail = await agentDetail($, a.id)
-  }
+  // 서브에이전트 기록은 패널이 열려 있을 때만 읽는다 — 도구 호출마다 도는 곳이다
+  if (paneOpen ?? (await $.ui.panes().catch(() => [])).some(x => x.id === AGENTS))
+    for (const a of list) if (a.id) a.detail = await agentDetail($, a.id)
   await update($, agents, () => list)
   return list
 }
@@ -373,22 +370,17 @@ function padCells(x: string, n: number) {
 const brief = (x: string) => (x.split(' — ')[0] ?? '').replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
 
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
-// 에이전트 패널: 같은 모드로 다시 부르면 닫고, 다른 모드(짧게 ↔ --detail)면 그 모드로 다시 연다
-// detail 을 안 주면(버튼) 열려 있을 때 닫는다
-async function toggleAgents($: EngineInterface, detail?: boolean) {
-  const open = (await $.ui.panes()).some(x => x.id === AGENTS)
-  if (open && (detail === undefined || detail === detailed)) {
+// 에이전트 패널 열기·닫기(명령과 버튼이 같이 쓴다)
+async function toggleAgents($: EngineInterface) {
+  if ((await $.ui.panes()).some(x => x.id === AGENTS)) {
     await $.ui.close({ id: AGENTS })
     return '에이전트 패널을 닫았습니다'
   }
-  if (open) await $.ui.close({ id: AGENTS })
-  detailed = detail ?? false
-  const list = await scanAgents($)
+  const list = await scanAgents($, true)
   const n = list.length
   const want = n * 2 + list.reduce((k, a) => k + (a.detail?.length ?? 0), 0) + new Set(list.map(a => a.who)).size * 2 + 2
-  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}${detailed ? ' · 자세히' : ''}`, closeOnEscape: true, rows: Math.min(detailed ? 40 : 24, want) })
-  const cmd = detailed ? '/workers --detail' : '/workers'
-  return `에이전트 ${n}개${detailed ? ' · 자세히' : ''} — ${cmd} 다시 입력하면 닫힘`
+  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true, rows: Math.min(40, want) })
+  return `에이전트 ${n}개 — /workers 다시 입력하면 닫힘`
 }
 
 async function togglePane($: EngineInterface) {
@@ -439,7 +431,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
-    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기 · --detail 은 최근 도구·마지막 말까지', argumentHint: '[--detail]' })
+    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기(마지막 말·최근 도구까지)' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
       name: 'open_loop_add',
@@ -465,9 +457,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
 
-  on('command.run', { command: 'workers' }, async ($, e) => {
+  on('command.run', { command: 'workers' }, async $ => {
     await refresh($, await $.session.cwd())
-    return { text: await toggleAgents($, /(^|\s)(--detail|-d)(\s|$)/.test(e.args)) }
+    return { text: await toggleAgents($) }
   })
 
   on('command.run', { command: 'loops' }, async ($, e) => {
@@ -528,7 +520,7 @@ export const register: Register = on => {
             ))}
           </Box>
         ))}
-        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 자세히: /workers --detail · 닫기: 같은 명령 다시 · 버튼 · ✕</Text>
+        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: /workers 다시 · 버튼 · ✕</Text>
       </Box>
     )
   })

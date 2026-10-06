@@ -278,7 +278,7 @@ test('서브에이전트가 도구를 부르면 패널 줄에 「지금」이 �
   }
 })
 
-test('/workers --detail 은 마지막 말·최근 도구(✓✗…)·횟수를 보이고, /workers 로 짧게 돌아간다', async ($, on) => {
+test('/workers 는 마지막 말·최근 도구(✓✗…)·횟수를 보인다', async ($, on) => {
   const g = world()
   g.install(on)
   let panes: { id: string }[] = []
@@ -295,21 +295,11 @@ test('/workers --detail 은 마지막 말·최근 도구(✓✗…)·횟수를 �
     { role: 'assistant', text: '테스트가 깨져서 원인을 찾습니다', toolUses: [{ tool_use_id: 't3', tool: 'Grep', input: { pattern: 'foo' } }] },
   ] }))
   await status($, on)
-  const r: any = await $.command.run({ command: 'workers', args: '--detail' } as any)
-  expect(r.text).toBe('에이전트 1개 · 자세히 — /workers --detail 다시 입력하면 닫힘')
+  await $.command.run({ command: 'workers', args: '' } as any)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
     for (const line of ['말 테스트가 깨져서 원인을 찾습니다', '✓ Read a.ts 300ms', '✗ Bash npm test 2.5초', '… Grep foo', '도구 3번 · 메시지 3개'])
       expect(await ui.find({ type: 'Text', text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeDefined()
     await ui.unmount()
   }
-  // 다른 모드로 부르면 닫지 않고 짧게 다시 연다
-  const r2: any = await $.command.run({ command: 'workers', args: '' } as any)
-  expect(r2.text).toBe('에이전트 1개 — /workers 다시 입력하면 닫힘')
-  expect(panes).toEqual([{ id: 'agents' }])
-  const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface: 'terminal', component: 'Pane', props: {}, requestId: 'agents' })
-  expect(await ui.find({ type: 'Text', text: /도구 3번/ })).toBeUndefined()
-  await ui.unmount()
-  const r3: any = await $.command.run({ command: 'workers', args: '' } as any)
-  expect(r3.text).toBe('에이전트 패널을 닫았습니다')
 })
