@@ -300,6 +300,23 @@ async function scanAgents($: EngineInterface) {
   return list
 }
 
+// 패널·번호 닫기가 같이 쓰는 순서: 레인(누가)별 묶음, 큰 묶음 먼저, 묶음 안은 최신 위
+function ordered(list: readonly Row[]) {
+  const groups = new Map<string, Row[]>()
+  for (const r of [...list].reverse()) groups.set(r.who || '기타', [...(groups.get(r.who || '기타') ?? []), r])
+  return [...groups].sort((a, b) => b[1].length - a[1].length)
+}
+
+// 「129시간 전」 → 「5일」 · 「3시간 전」 → 「3시간」 · 「12분 전」 → 「12분」
+function shortAge(age: string) {
+  const h = age.match(/^(\d+)시간/)
+  if (h && Number(h[1]) >= 48) return `${Math.round(Number(h[1]) / 24)}일`
+  return age.replace(/ 전$/, '')
+}
+
+// 요약 한 줄: « — » 앞 구절, 괄호 속 ID·경로는 뺀다
+const brief = (x: string) => x.split(' — ')[0].replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
+
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
 async function toggleAgents($: EngineInterface) {
   if ((await $.ui.panes()).some(x => x.id === AGENTS)) {
@@ -388,7 +405,11 @@ export const register: Register = on => {
     const [verb, key, ...rest] = e.args.trim().split(/\s+/)
     let text = ''
     if (verb === 'add' && key && rest.length) text = await addItem($, key, rest.join(' '), await $.session.id())
-    else if (verb === 'close' && key) text = await closeItem($, key, rest.join(' '))
+    else if (verb === 'close' && key) {
+      // 숫자면 패널에 보이는 번호 → 그 항목의 키
+      const byNo = /^\d+$/.test(key) ? ordered(await read($, rows)).flatMap(([, rs]) => rs)[Number(key) - 1]?.key : undefined
+      text = await closeItem($, byNo ?? key, rest.join(' '))
+    }
     await refresh($, await $.session.cwd())
     if (verb === 'add' || verb === 'close') return { text }
     // 인자 없이 다시 부르면 닫는다(✕ 를 누르거나 패널에서 Esc 로도 닫힌다)
@@ -451,29 +472,30 @@ export const register: Register = on => {
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
-    const list = await read($, rows)
-    const groups = new Map<string, Row[]>()
-    for (const r of list) groups.set(r.kind, [...(groups.get(r.kind) ?? []), r])
-    // 요약은 « — » 앞 첫 구절만 한 줄로(길면 끝을 자른다)
-    const head = (x: string) => x.split(' — ')[0]
+    let i = 0
+    const groups = ordered(await read($, rows))
     return (
       <Box flexDirection="column">
-        {list.length === 0 && <Text dimColor>열린 일 없음</Text>}
-        {[...groups].map(([kind, rs]) => (
+        {groups.length === 0 && <Text dimColor>열린 일 없음</Text>}
+        {groups.map(([who, rs]) => (
           <Box flexDirection="column" marginBottom={1}>
-            <Text bold>{kind} {rs.length}</Text>
-            {rs.map(r => (
-              <Box flexDirection="column" paddingLeft={2}>
-                <Text wrap="truncate-end">{head(r.text)}</Text>
-                <Text dimColor wrap="truncate-end">{r.age} · {r.who} · {r.key}</Text>
-              </Box>
-            ))}
+            <Text bold>{who} {rs.length}</Text>
+            {rs.map(r => {
+              i += 1
+              return (
+                <Box flexDirection="row" gap={1}>
+                  <Text dimColor>{String(i).padStart(2)} {shortAge(r.age).padEnd(5)}</Text>
+                  <Text wrap="truncate-end">{brief(r.text)}</Text>
+                </Box>
+              )
+            })}
           </Box>
         ))}
-        <Text dimColor>닫기: /loops 다시 · ✕ · 항목 닫기: /loops close 키</Text>
+        <Text dimColor>번호로 닫기: /loops close 3 · 패널 닫기: /loops 다시 · ✕</Text>
       </Box>
     )
   })
+
 
   on('tool.call', { tool: 'mcp__meta-status__open_loop_add' }, async ($, e) => {
     const i = e.input as { key: string; text: string }

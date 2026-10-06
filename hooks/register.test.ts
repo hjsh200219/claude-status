@@ -219,3 +219,17 @@ test('/workers 는 에이전트 패널을 열고 다시 부르면 닫는다', as
   expect(panes).toEqual([])
   expect(r2.text).toBe('에이전트 패널을 닫았습니다')
 })
+
+test('/loops close 번호 — 패널 순서(레인별 · 큰 묶음 먼저 · 최신 위)의 번호로 닫는다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  const t = g.w.clock / 1000
+  g.w.files.set(`${DIR}/items/a.json`, JSON.stringify({ key: 'a', kind: 'note', ts: t - 7200, lane: 'DevOps2', text: '옛 일 — 설명 (C0AKC)' }))
+  g.w.files.set(`${DIR}/items/b.json`, JSON.stringify({ key: 'b', kind: 'note', ts: t - 60, lane: 'DevOps2', text: '새 일' }))
+  g.w.files.set(`${DIR}/items/c.json`, JSON.stringify({ key: 'c', kind: 'note', ts: t - 30, lane: 'DevOps1', text: '다른 레인' }))
+  await status($, on)
+  // 순서: DevOps2[b(1), a(2)] · DevOps1[c(3)] → 2번 = a
+  const r: any = await $.command.run({ command: 'loops', args: 'close 2' } as any)
+  expect(r.text).toBe('닫음: a')
+  expect(g.items().filter(i => i.closed).map(i => i.key)).toEqual(['a'])
+})

@@ -44,9 +44,10 @@ Claude Code 에서:
 
 ```
 /workers                     에이전트 패널 열기·닫기
-/loops                       열린 일 패널 열기·닫기(종류별 · 요약 + 나이·누가·키)
+/loops                       열린 일 패널 열기·닫기(레인별 · 최신 위 · 번호 · 나이 · 요약 한 줄)(종류별 · 요약 + 나이·누가·키)
 /loops add deploy-check 내일 09시 배포 결과 확인
-/loops close deploy-check
+/loops close deploy-check      키로 닫기
+/loops close 3                 패널 번호로 닫기
 /where                            입력창 위 줄 다시 읽기
 ```
 
