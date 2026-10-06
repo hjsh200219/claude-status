@@ -1,0 +1,13 @@
+{
+  "name": "status",
+  "owner": {
+    "name": "hjsh200219"
+  },
+  "plugins": [
+    {
+      "name": "status",
+      "source": "./"
+    }
+  ],
+  "description": "Claude Code 상태줄·열린 일 장부 mod"
+}
