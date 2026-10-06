@@ -275,6 +275,18 @@ function ageOf(etime: string) {
 
 const clean = (x: string, n: number) => x.replace(/[\r\n\t]+/g, ' ').replace(/[`<>"']/g, '').trim().slice(0, n)
 
+// codex 의 첫 하위 명령 — 앞에 붙은 옵션(`--yolo`, `-c k=v`, `-m 모델` …)은 건너뛴다(셸 별칭이 `codex --yolo exec` 로 띄운다)
+const CODEX_VALUE_FLAGS = new Set(['-c', '--config', '-m', '--model', '-p', '--profile', '-C', '--cd', '-s', '--sandbox', '-a', '--ask-for-approval', '-i', '--image', '--remote', '--enable', '--disable'])
+export function subcommand(cmd: string) {
+  const t = cmd.split(/\s+/).slice(1)
+  for (let i = 0; i < t.length; i++) {
+    const x = t[i] ?? ''
+    if (!x.startsWith('-')) return x
+    if (CODEX_VALUE_FLAGS.has(x)) i++
+  }
+  return ''
+}
+
 // ps 출력(pid ppid etime command) + tmux 패널(pane_pid 세션) → 위임 에이전트 목록.
 // 잡는 것: edb-p·claude-as·delegate 아래의 `claude -p`, `codex exec`. 버리는 것: OMC HUD 요약(session-summary)이
 // 띄우는 `claude -p`, 상주 Codex(app-server·TUI), 다른 위임 안에서 다시 뜬 것(맨 위 하나만 센다).
@@ -293,7 +305,7 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
   }
   const base = (cmd: string) => (cmd.split(' ')[0] ?? '').split('/').pop() ?? ''
   const isClaudeP = (cmd: string) => base(cmd) === 'claude' && /\s-p(\s|$)/.test(cmd)
-  const isCodexExec = (cmd: string) => base(cmd) === 'codex' && /^\S+\s+exec(\s|$)/.test(cmd)
+  const isCodexExec = (cmd: string) => base(cmd) === 'codex' && subcommand(cmd) === 'exec'
   let root = me
   for (let q = me, i = 0; q && procs.has(q) && i < 30; q = procs.get(q)!.ppid, i++) {
     const c = procs.get(q)!.cmd

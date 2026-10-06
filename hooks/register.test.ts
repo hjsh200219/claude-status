@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { actOf, editWarning, parsePs } from './register'
+import { actOf, editWarning, parsePs, subcommand } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const CFG = '/h/.claude'
@@ -302,4 +302,24 @@ test('/workers 는 마지막 말·최근 도구(✓✗…)·횟수를 보인다'
       expect(await ui.find({ type: 'Text', text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('subcommand — 앞 옵션을 건너뛴 codex 하위 명령', () => {
+  expect(subcommand('/x/codex exec -C /h/a -')).toBe('exec')
+  expect(subcommand('/x/codex --yolo exec -C /h/a -s workspace-write -m gpt-6-astra -')).toBe('exec')
+  expect(subcommand('/x/codex -c cli_auth_credentials_store="file" --remote unix:///s.sock resume 01a')).toBe('resume')
+  expect(subcommand('/x/codex exec-server --remote https://x')).toBe('exec-server')
+  expect(subcommand('/x/codex --yolo resume')).toBe('resume')
+})
+
+test('에이전트 감지: 셸 별칭이 붙인 codex --yolo exec 도 잡는다', () => {
+  const ps = [
+    '  100     1 05:00:00 /x/claude-fixed/claude --resume abc --remote-control',
+    '  500   100    04:41 /bin/zsh -c source snapshot; codex exec -C /h/workspace/meta-plan -',
+    '  501   500    04:41 /h/.local/bin/codex --yolo exec -C /h/workspace/meta-plan -s workspace-write -m gpt-6-astra -c model_reasoning_effort=high -',
+    '  600     1    10:00 /h/.local/bin/codex --yolo resume',
+  ].join('\n')
+  expect(parsePs(ps, '100 DevOps1\n', 100).map(({ detail, ...a }) => a)).toEqual([
+    { who: 'codex', name: 'exec', desc: 'meta-plan', age: '4분', lane: 'DevOps1' },
+  ])
 })
