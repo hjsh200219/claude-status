@@ -252,8 +252,8 @@ test('서브에이전트가 도구를 부르면 패널 줄에 「지금」이 �
   on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }] }))
   on('tool.call', () => ({ result: 'ok' }))
   await status($, on)
-  await $.tool.call({ tool: 'Read', input: { file_path: '/x/foo.ts' }, agentId: 'a1' } as any)
-  await $.tool.call({ tool: 'Grep', input: { pattern: 'bar' }, agentId: 'a1' } as any)
+  await $.tool.call({ tool: 'Read', file_path: '/x/foo.ts', agentId: 'a1' } as any)
+  await $.tool.call({ tool: 'Grep', pattern: 'bar', agentId: 'a1' } as any)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
     expect(await ui.find({ type: 'Text', text: /지금 Grep bar · 2번째/ })).toBeDefined()

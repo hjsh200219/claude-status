@@ -508,7 +508,7 @@ export const register: Register = on => {
   // 턴 중에도 목록이 따라오게 — 도구 호출이 끝날 때마다 다시 읽는다(화면 표시만, 모델 문맥엔 넣지 않는다)
   // 서브에이전트의 도구 호출은 부르기 전에 「지금 하는 일」로 적는다(도는 동안 보이게)
   on('tool.call', async ($, e, next) => {
-    if (e.agentId) await noteAct($, e.agentId, e.tool, e.input).catch(() => undefined)
+    if (e.agentId) await noteAct($, e.agentId, e.tool, e).catch(() => undefined)
     const r = await next(e)
     await scanAgents($).catch(() => undefined)
     return r
