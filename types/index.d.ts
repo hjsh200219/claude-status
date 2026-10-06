@@ -1,5 +1,5 @@
 declare module 'claude-code' {
   interface PluginState {
-    status: { lines: string[] }
+    status: { rows: { kind: string; age: string; who: string; text: string; key: string }[] }
   }
 }

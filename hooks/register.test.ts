@@ -130,7 +130,7 @@ test('open_loop_add 도구로 적고 open_loop_close 로 닫는다', async ($, o
   expect(g.items()[0].closed).toBe(true)
 })
 
-test('/opens 는 옆 패널에 종류·누가·내용 목록을 연다(tmux 없으면 세션 id)', async ($, on) => {
+test('/loops 는 패널을 열고(종류·나이·누가·키) 다시 부르면 닫는다', async ($, on) => {
   const g = world()
   g.install(on)
   g.w.files.set(`${DIR}/items/a.json`, JSON.stringify({ key: 'a', kind: 'note', ts: g.w.clock / 1000 - 7200, session: 'abcdef1234', text: '배포 뒤 확인' }))
@@ -140,12 +140,21 @@ test('/opens 는 옆 패널에 종류·누가·내용 목록을 연다(tmux 없�
   on('state.get', () => ({ value: { value: saved, version } }))
   on('state.set', ($: any, e: any) => { saved = e.value; version += 1; return { value: { isSet: true, version } } })
   let opened: any
-  on('ui.open', ($: any, e: any) => { opened = e; return { value: { isPlaced: true } } })
+  let closed: any
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { opened = e; panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', ($: any, e: any) => { closed = e; panes = []; return { value: undefined } })
   await status($, on)
-  const r: any = await $.command.run({ command: 'opens', args: '' } as any)
+  const r: any = await $.command.run({ command: 'loops', args: '' } as any)
   expect(opened).toMatchObject({ id: 'open-loops', title: '열린 일 2' })
-  expect(r.text).toBe('열린 일 2건 — 옆 패널')
-  const list = g.items().length // 장부는 그대로
-  expect(list).toBe(2)
-  expect(saved).toEqual(['[메모] 2시간 전 · 세션 abcdef12 · 배포 뒤 확인   (a)', '[확인 대기] 1분 전 · DevOps2 · 알림 확인   (b)'])
+  expect(r.text).toBe('열린 일 2건 — /loops 다시 입력하면 닫힘')
+  expect(saved).toEqual([
+    { kind: '메모', age: '2시간 전', who: '세션 abcdef12', text: '배포 뒤 확인', key: 'a' },
+    { kind: '확인 대기', age: '1분 전', who: 'DevOps2', text: '알림 확인', key: 'b' },
+  ])
+  // 다시 부르면 닫는다
+  const r2: any = await $.command.run({ command: 'loops', args: '' } as any)
+  expect(closed).toMatchObject({ id: 'open-loops' })
+  expect(r2.text).toBe('열린 일 패널을 닫았습니다')
 })

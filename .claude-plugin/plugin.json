@@ -1,6 +1,6 @@
 {
   "name": "status",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "description": "Claude Code 상태줄에 repo·브랜치·미푸시(↑)·수정 파일(✎)·열린 일을 보이고, 세션이 끝내지 못한 일을 장부로 남긴다",
   "author": {
     "name": "hjsh200219"
