@@ -9,7 +9,7 @@ const DIR = `${CFG}/open-loops`
 function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) {
   const files = new Map<string, string>()
   const mtimes = new Map<string, number>()
-  const w = { files, mtimes, dirty: [' M a.ts', '?? b.ts', ' M c.ts'], ahead: 2, clock: 1_000_000_000_000 }
+  const w = { files, mtimes, stats: [] as string[], dirty: [' M a.ts', '?? b.ts', ' M c.ts'], ahead: 2, clock: 1_000_000_000_000 }
   function run(argv: readonly string[]) {
     const cmd = argv.join(' ')
     // 모든 git 호출은 남의 repo 설정(fsmonitor·훅)을 끄고 돈다
@@ -40,7 +40,7 @@ function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) 
       on('fs.exists', ($: any, e: any) => ({ value: opts.legacy ? true : files.has(e.path) }))
       on('fs.read', ($: any, e: any) => files.has(e.path) ? { value: files.get(e.path) } : { deny: 'ENOENT' })
       on('fs.write', ($: any, e: any) => { files.set(e.path, e.text); return { value: undefined } })
-      on('fs.stat', ($: any, e: any) => mtimes.has(e.path) ? { value: { mtimeMs: mtimes.get(e.path) } } : { deny: 'ENOENT' })
+      on('fs.stat', ($: any, e: any) => (w.stats.push(e.path), mtimes.has(e.path)) ? { value: { mtimeMs: mtimes.get(e.path) } } : { deny: 'ENOENT' })
       on('fs.list', ($: any, e: any) => {
         const pre = e.path.endsWith('/') ? e.path : e.path + '/'
         const names = [...files.keys()].filter(k => k.startsWith(pre) && !k.slice(pre.length).includes('/'))
@@ -119,6 +119,22 @@ test('다른 세션이 15분 안에 고친 파일이면 경고를 문맥에 넣�
   expect(await editWarning(fake as any, { dir: DIR }, 'other', '/h/workspace/a.ts')).toBeUndefined() // 자기 편집엔 경고 없음
   const ctx = [msg ?? '']
   expect(ctx.join('\n')).toContain('[동시 편집] a.ts 는 DevOps2 세션(other)이 2분 전에 고쳤습니다 — 그 세션은 지금도 활동 중입니다')
+})
+
+test('Edit 직전 hook 이 다른 세션 편집을 경고로 붙인다(mod 장부 모드)', async ($, on) => {
+  const g = world()
+  g.install(on)
+  g.w.files.set(`${DIR}/edits/other.json`, JSON.stringify({ transcript: '/t/other.jsonl', lane: 'DevOps2', paths: { '/h/workspace/a.ts': g.w.clock / 1000 - 120 } }))
+  g.w.mtimes.set('/t/other.jsonl', g.w.clock - 60_000)
+  // 경고 문장은 모델 문맥으로만 가서 도구 결과엔 안 보인다 — 판정이 상대 세션 기록까지 읽었는지로 본다
+  const stats = g.w.stats
+  on('tool.call', () => ({ result: 'ok' }))
+  await status($, on)
+  stats.length = 0
+  await $.tool.call({ tool: 'Read', file_path: '/h/workspace/a.ts' } as any)
+  expect(stats).toEqual([]) // 편집 도구가 아니면 보지 않는다
+  await $.tool.call({ tool: 'Edit', file_path: '/h/workspace/a.ts', old_string: 'a', new_string: 'b' } as any)
+  expect(stats).toEqual(['/t/other.jsonl'])
 })
 
 test('open_loop_add 도구로 적고 open_loop_close 로 닫는다', async ($, on) => {

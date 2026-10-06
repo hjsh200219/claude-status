@@ -251,9 +251,9 @@ export async function editWarning($: EngineInterface, w: Where, me: string, p: s
 
 // ps 의 etime([[dd-]hh:]mm:ss) → 「N분」「N시간 M분」
 function ageOf(etime: string) {
-  const [d, rest] = etime.includes('-') ? etime.split('-') : ['0', etime]
+  const [d, rest = ''] = etime.includes('-') ? etime.split('-') : ['0', etime]
   const p = rest.split(':').map(Number)
-  const [h, m] = p.length === 3 ? [p[0], p[1]] : [0, p[0]]
+  const [h = 0, m = 0] = p.length === 3 ? [p[0], p[1]] : [0, p[0]]
   const hours = Number(d) * 24 + h
   return hours ? `${hours}시간 ${m}분` : m ? `${m}분` : '방금'
 }
@@ -269,12 +269,12 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
   const procs = new Map<number, { ppid: number; etime: string; cmd: string }>()
   for (const l of ps.split('\n')) {
     const m = l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
-    if (m) procs.set(Number(m[1]), { ppid: Number(m[2]), etime: m[3], cmd: m[4] })
+    if (m) procs.set(Number(m[1]), { ppid: Number(m[2]), etime: m[3] ?? '', cmd: m[4] ?? '' })
   }
   const lanes = new Map<number, string>()
   for (const l of panes.split('\n')) {
     const m = l.match(/^(\d+)\s+(.+)$/)
-    if (m) lanes.set(Number(m[1]), m[2].trim())
+    if (m) lanes.set(Number(m[1]), (m[2] ?? '').trim())
   }
   const base = (cmd: string) => (cmd.split(' ')[0] ?? '').split('/').pop() ?? ''
   const isClaudeP = (cmd: string) => base(cmd) === 'claude' && /\s-p(\s|$)/.test(cmd)
@@ -301,7 +301,7 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
       const as = up.match(/(?:^|\/)claude-as\s+(\S+)/m)
       // claude-as 는 exec 로 claude 가 되어 부모 목록에 안 남는다 — 계정을 모르면 claude 로 둔다
       const desc = edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : (p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
-      out.push({ who: edb ? 'edb' : as ? as[1] : 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane })
+      out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane })
     } else {
       const dir = p.cmd.match(/\s-C\s+(\S+)/)?.[1] ?? ''
       out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane })
@@ -349,7 +349,7 @@ function padCells(x: string, n: number) {
 }
 
 // 요약 한 줄: « — » 앞 구절, 괄호 속 ID·경로는 뺀다
-const brief = (x: string) => x.split(' — ')[0].replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
+const brief = (x: string) => (x.split(' — ')[0] ?? '').replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
 
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
 async function toggleAgents($: EngineInterface) {
@@ -572,9 +572,10 @@ export const register: Register = on => {
   on('classic.PreToolUse', async ($, e, next) => {
     const r = await next(e)
     const w = await locate($)
-    const p = editPath(e.tool_input)
-    if (w.legacy || !EDIT_TOOLS.includes(e.tool_name) || !p || SKIP_PREFIX.some(s => p.startsWith(s))) return r
-    const msg = await editWarning($, w, e.session_id, p)
+    // e 는 도구 envelope — 입력 필드가 e 에 바로 붙고 tool_input·session_id 는 없다
+    const p = editPath(e)
+    if (w.legacy || !EDIT_TOOLS.includes(e.tool) || !p || SKIP_PREFIX.some(s => p.startsWith(s))) return r
+    const msg = await editWarning($, w, await $.session.id(), p)
     if (!msg) return r
     return { ...r, additionalContext: [...(r.additionalContext ?? []), msg] }
   }).catch(($, e, next) => next(e)) // 훅 계약: 장부가 깨져도 작업을 막지 않는다
