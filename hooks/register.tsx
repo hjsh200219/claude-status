@@ -306,7 +306,7 @@ export const register: Register = on => {
     return { text: await togglePane($) }
   })
 
-  // 입력창 위 한 줄: repo · 브랜치 ↑✎ + 「열린 일 N」 버튼(누르면 패널 열기·닫기)
+  // 입력창 위 한 줄: 왼쪽 repo · 브랜치 ↑✎ · 요약, 오른쪽 끝 「열린 일 N」 버튼(누르면 패널 열기·닫기)
   // 상태줄($.ui.status)은 앞에 「⚠ 플러그인 이름:」이 붙고 누를 수 없어 쓰지 않는다
   on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const where = await read($, head)
@@ -315,10 +315,12 @@ export const register: Register = on => {
     if ((!where && !n && !sum) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
-      <Box flexDirection="row" gap={1}>
-        {where && <Text dimColor>{where}</Text>}
+      <Box flexDirection="row" justifyContent="space-between" width="100%">
+        <Box flexDirection="row" gap={1} flexGrow={1}>
+          {where && <Text dimColor>{where}</Text>}
+          {sum && <Text dimColor>· {sum}</Text>}
+        </Box>
         {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
-        {sum && <Text dimColor>· {sum}</Text>}
       </Box>
     )
   })

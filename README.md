@@ -3,7 +3,7 @@
 Claude Code 입력창 위에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
 ```
-workspace · main ↑2 ✎3  [열린 일 3]  · 세션 요약
+workspace · main ↑2 ✎3 · 세션 요약               [열린 일 3]
 ```
 
 | 표시 | 뜻 |
