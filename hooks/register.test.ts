@@ -12,6 +12,8 @@ function world(opts: { legacy?: boolean; inRepo?: boolean } = {}) {
   const w = { files, mtimes, dirty: [' M a.ts', '?? b.ts', ' M c.ts'], ahead: 2, clock: 1_000_000_000_000 }
   function run(argv: readonly string[]) {
     const cmd = argv.join(' ')
+    // 모든 git 호출은 남의 repo 설정(fsmonitor·훅)을 끄고 돈다
+    if (argv[0] === 'git' && !cmd.includes('core.fsmonitor=false')) throw new Error(`안전 옵션 없는 git: ${cmd}`)
     if (cmd.includes('CLAUDE_CONFIG_DIR')) return out(`${CFG}\n/h`)
     if (cmd.includes('tmux')) return out('DevOps1\n')
     if (argv[0] === 'python3' && argv.includes('list')) return out('[{"kind":"note"},{"kind":"note"},{"kind":"watch"}]')
