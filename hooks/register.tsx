@@ -1,3 +1,4 @@
+import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
 // ── 열린 일 장부 ─────────────────────────────────────────────────────────────
@@ -32,6 +33,10 @@ type Edits = { transcript?: string; lane?: string; paths: Record<string, number>
 type Where = { dir: string; legacy?: string }
 
 let where: Promise<Where> | undefined
+
+// 옆 패널이 그리는 목록(상태줄을 다시 읽을 때마다 갱신)
+const PANE = 'open-loops'
+const lines = atom({ plugin: 'status', key: 'lines' } as const, [])
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
@@ -148,7 +153,9 @@ function render(it: Item, t: number) {
   }
   // 장부 문구는 다른 세션·모델이 쓴 데이터다 — 한 줄·200자로 잘라 문맥에 지시처럼 섞이지 않게
   const one = (x: string, n: number) => x.replace(/[\r\n\t]+/g, ' ').replace(/[`<>]/g, '').slice(0, n)
-  return `${age} · ${one(it.lane || it.source || '', 20)} · ${one(text, 200)}`
+  // 누가: 레인(tmux 세션 이름) → 없으면 세션 id 앞 8자리 → 없으면 출처
+  const who = it.lane || (it.session ? `세션 ${it.session.slice(0, 8)}` : it.source || '')
+  return `${age} · ${one(who, 20)} · ${one(text, 200)}`
 }
 
 async function addItem($: EngineInterface, key: string, text: string, session?: string) {
@@ -224,15 +231,11 @@ async function refresh($: EngineInterface, cwd: string) {
   const n = branch ? (await aheadOf($, cwd)) ?? 0 : 0
   const m = branch ? (await dirtyOf($, cwd, []))?.length ?? 0 : 0
   const marks = [n ? `↑${n}` : '', m ? `✎${m}` : ''].filter(Boolean).join(' ')
-  // 열린 일 — 종류별 개수, 많은 순
-  const counts = new Map<string, number>()
-  for (const x of await openItems($)) {
-    const k = KINDS[x.kind ?? ''] ?? x.kind ?? '기타'
-    counts.set(k, (counts.get(k) ?? 0) + 1)
-  }
-  const open = counts.size
-    ? '열린 일 ' + [...counts].sort((a, b) => b[1] - a[1]).map(([k, c]) => `${k} ${c}`).join(' · ')
-    : ''
+  // 열린 일 — 상태줄엔 전체 개수만, 목록은 /open-loops 옆 패널
+  const t = await now($)
+  const items = await openItems($)
+  await update($, lines, () => items.map(it => `[${KINDS[it.kind ?? ''] ?? it.kind ?? '기타'}] ${render(it, t)}   (${it.key})`))
+  const open = items.length ? `열린 일 ${items.length}` : ''
   // 폴더는 git repo 밖일 때만 — repo 안에선 repo·브랜치로 충분하다
   const text = [repo ? '' : dir, repo, [branch, marks].filter(Boolean).join(' '), open].filter(Boolean).join(' · ')
   $.ui.status(text)
@@ -243,7 +246,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
-    await $.command.register({ name: 'open-loops', description: '열린 일 보기 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
+    await $.command.register({ name: 'open-loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
       name: 'open_loop_add',
       description: '이 세션에서 끝내지 못한 일(배포 뒤 확인, 사람 결정 대기 등)을 열린 일 장부에 남긴다. 다음 세션이 시작할 때 보인다.',
@@ -269,16 +272,26 @@ export const register: Register = on => {
 
   on('command.run', { command: 'open-loops' }, async ($, e) => {
     const [verb, key, ...rest] = e.args.trim().split(/\s+/)
-    let text: string
+    let text = ''
     if (verb === 'add' && key && rest.length) text = await addItem($, key, rest.join(' '), await $.session.id())
     else if (verb === 'close' && key) text = await closeItem($, key, rest.join(' '))
-    else {
-      const t = await now($)
-      const items = await openItems($)
-      text = items.length ? items.map(it => `${render(it, t)}   (${it.key})`).join('\n') : '열린 일 없음'
-    }
     await refresh($, await $.session.cwd())
-    return { text }
+    if (verb === 'add' || verb === 'close') return { text }
+    const n = (await read($, lines)).length
+    const opened = await $.ui.open({ id: PANE, title: `열린 일 ${n}`, closeOnEscape: true })
+    return { text: opened.isPlaced ? `열린 일 ${n}건 — 옆 패널` : (await read($, lines)).join('\n') || '열린 일 없음' }
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const list = await read($, lines)
+    return (
+      <Box flexDirection="column">
+        {list.length === 0 && <Text dimColor>열린 일 없음</Text>}
+        {list.map(l => <Text>{l}</Text>)}
+        <Text dimColor>닫기: /open-loops close &lt;키&gt; · Esc</Text>
+      </Box>
+    )
   })
 
   on('tool.call', { tool: 'mcp__status__open_loop_add' }, async ($, e) => {

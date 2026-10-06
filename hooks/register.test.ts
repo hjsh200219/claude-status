@@ -57,12 +57,12 @@ async function status($: any, on: any) {
   return () => saved
 }
 
-test('상태줄: repo·브랜치·↑✎·열린 일(종류별)', async ($, on) => {
+test('상태줄: repo·브랜치·↑✎·열린 일 전체 개수', async ($, on) => {
   const g = world()
   g.install(on)
   g.w.files.set(`${DIR}/items/n.json`, JSON.stringify({ key: 'n', kind: 'note', ts: 1, text: '배포 뒤 확인' }))
   const shown = await status($, on)
-  expect(shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 메모 1')
+  expect(shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 1')
 })
 
 test('repo 밖: 폴더만', async ($, on) => {
@@ -78,7 +78,7 @@ test('전환 모드: 원본 스크립트 장부를 읽는다', async ($, on) => 
   const g = world({ legacy: true })
   g.install(on)
   const shown = await status($, on)
-  expect(shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 메모 2 · 확인 대기 1')
+  expect(shown()).toBe('workspace · main ↑2 ✎3 · 열린 일 3')
 })
 
 test('Stop 이 미커밋·미푸시를 남기고, git 이 깨끗해지면 스스로 닫힌다', async ($, on) => {
@@ -128,4 +128,24 @@ test('open_loop_add 도구로 적고 open_loop_close 로 닫는다', async ($, o
   expect(g.items()).toMatchObject([{ key: 'deploy-check', kind: 'note', lane: 'DevOps1', text: '내일 09시 배포 결과 확인' }])
   await $.tool.call({ tool: 'mcp__status__open_loop_close', input: { key: 'deploy-check' } } as any)
   expect(g.items()[0].closed).toBe(true)
+})
+
+test('/open-loops 는 옆 패널에 종류·누가·내용 목록을 연다(tmux 없으면 세션 id)', async ($, on) => {
+  const g = world()
+  g.install(on)
+  g.w.files.set(`${DIR}/items/a.json`, JSON.stringify({ key: 'a', kind: 'note', ts: g.w.clock / 1000 - 7200, session: 'abcdef1234', text: '배포 뒤 확인' }))
+  g.w.files.set(`${DIR}/items/b.json`, JSON.stringify({ key: 'b', kind: 'watch', ts: g.w.clock / 1000 - 60, lane: 'DevOps2', text: '알림 확인' }))
+  let saved: unknown = []
+  let version = 0
+  on('state.get', () => ({ value: { value: saved, version } }))
+  on('state.set', ($: any, e: any) => { saved = e.value; version += 1; return { value: { isSet: true, version } } })
+  let opened: any
+  on('ui.open', ($: any, e: any) => { opened = e; return { value: { isPlaced: true } } })
+  await status($, on)
+  const r: any = await $.command.run({ command: 'open-loops', args: '' } as any)
+  expect(opened).toMatchObject({ id: 'open-loops', title: '열린 일 2' })
+  expect(r.text).toBe('열린 일 2건 — 옆 패널')
+  const list = g.items().length // 장부는 그대로
+  expect(list).toBe(2)
+  expect(saved).toEqual(['[메모] 2시간 전 · 세션 abcdef12 · 배포 뒤 확인   (a)', '[확인 대기] 1분 전 · DevOps2 · 알림 확인   (b)'])
 })
