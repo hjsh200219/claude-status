@@ -217,7 +217,8 @@ test('에이전트 감지: 이 세션의 edb-p·delegate codex exec·맨 claude 
   ].join('\n')
   const panes = '100 DevOps1\n700 DevOps2\n'
   expect(parsePs(ps, panes).map(a => a.lane)).toContain('DevOps2')
-  expect(parsePs(ps, panes, 100)).toEqual([
+  expect(parsePs(ps, panes, 100)[0]?.detail).toEqual(['pid 202', 'python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘'])
+  expect(parsePs(ps, panes, 100).map(({ detail, ...a }) => a)).toEqual([
     { who: 'edb', name: 'edb-p', desc: '필첵 PRD 검토해줘', age: '11분', lane: 'DevOps1' },
     { who: 'codex', name: 'delegate', desc: 'pillcheck-app', age: '2분', lane: 'DevOps1' },
     { who: 'claude', name: 'claude -p', desc: '이 함수 테스트 써줘 --permission-mode bypassPermissions', age: '방금', lane: 'DevOps1' },
@@ -275,4 +276,40 @@ test('서브에이전트가 도구를 부르면 패널 줄에 「지금」이 �
     expect(await ui.find({ type: 'Text', text: /지금 Grep bar · 2번째/ })).toBeDefined()
     await ui.unmount()
   }
+})
+
+test('/workers --detail 은 마지막 말·최근 도구(✓✗…)·횟수를 보이고, /workers 로 짧게 돌아간다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', () => { panes = []; return { value: undefined } })
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }] }))
+  on('session.messages', () => ({ value: [
+    { role: 'assistant', text: '먼저 파일을 읽겠습니다', toolUses: [
+      { tool_use_id: 't1', tool: 'Read', input: { file_path: '/x/a.ts' }, text: 'ok', durationMs: 300 },
+      { tool_use_id: 't2', tool: 'Bash', input: { command: 'npm test' }, text: 'fail', isError: true, durationMs: 2500 },
+    ] },
+    { role: 'user', text: '', toolUses: [] },
+    { role: 'assistant', text: '테스트가 깨져서 원인을 찾습니다', toolUses: [{ tool_use_id: 't3', tool: 'Grep', input: { pattern: 'foo' } }] },
+  ] }))
+  await status($, on)
+  const r: any = await $.command.run({ command: 'workers', args: '--detail' } as any)
+  expect(r.text).toBe('에이전트 1개 · 자세히 — /workers --detail 다시 입력하면 닫힘')
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
+    for (const line of ['말 테스트가 깨져서 원인을 찾습니다', '✓ Read a.ts 300ms', '✗ Bash npm test 2.5초', '… Grep foo', '도구 3번 · 메시지 3개'])
+      expect(await ui.find({ type: 'Text', text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeDefined()
+    await ui.unmount()
+  }
+  // 다른 모드로 부르면 닫지 않고 짧게 다시 연다
+  const r2: any = await $.command.run({ command: 'workers', args: '' } as any)
+  expect(r2.text).toBe('에이전트 1개 — /workers 다시 입력하면 닫힘')
+  expect(panes).toEqual([{ id: 'agents' }])
+  const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface: 'terminal', component: 'Pane', props: {}, requestId: 'agents' })
+  expect(await ui.find({ type: 'Text', text: /도구 3번/ })).toBeUndefined()
+  await ui.unmount()
+  const r3: any = await $.command.run({ command: 'workers', args: '' } as any)
+  expect(r3.text).toBe('에이전트 패널을 닫았습니다')
 })

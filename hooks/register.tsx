@@ -44,10 +44,26 @@ const head = atom({ plugin: 'meta-status', key: 'head' } as const, '')
 const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
 // 지금 도는 에이전트(이 세션의 서브에이전트 + 이 세션이 띄운 edb-p·claude-as·codex exec)
 const AGENTS = 'agents'
-type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string }
+type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[] }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
 const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
+let detailed = false // /workers --detail 로 연 패널이면 줄마다 자세히(mod 를 다시 읽으면 짧게로 돌아간다)
+
+// 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중) · 총 횟수
+async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
+  const ms = await $.session.messages({ agentId: id }).catch(() => undefined)
+  if (!Array.isArray(ms)) return []
+  const said = [...ms].reverse().find(m => m.role === 'assistant' && m.text.trim())?.text ?? ''
+  const uses = ms.flatMap(m => m.toolUses)
+  const mark = (u: (typeof uses)[number]) => (u.isError ? '✗' : 'text' in u || 'result' in u ? '✓' : '…')
+  const secs = (ms: number) => (ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}초`)
+  return [
+    ...(said ? [`말 ${clean(said, 120)}`] : []),
+    ...uses.slice(-5).map(u => `${mark(u)} ${actOf(u.tool, u.input)}${u.durationMs ? ` ${secs(u.durationMs)}` : ''}`),
+    `도구 ${uses.length}번 · 메시지 ${ms.length}개`,
+  ]
+}
 
 // 도구 호출 한 줄: 「Read register.tsx」「Bash git status」 — 입력에서 처음 보이는 대표 문자열
 const ACT_KEYS = ['description', 'file_path', 'notebook_path', 'path', 'pattern', 'query', 'url', 'command', 'prompt']
@@ -301,10 +317,10 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
       const as = up.match(/(?:^|\/)claude-as\s+(\S+)/m)
       // claude-as 는 exec 로 claude 가 되어 부모 목록에 안 남는다 — 계정을 모르면 claude 로 둔다
       const desc = edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : (p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
-      out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane })
+      out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(edb?.cmd ?? p.cmd, 200)] })
     } else {
       const dir = p.cmd.match(/\s-C\s+(\S+)/)?.[1] ?? ''
-      out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane })
+      out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(p.cmd, 200)] })
     }
   }
   return out
@@ -323,6 +339,11 @@ async function scanAgents($: EngineInterface) {
     ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
     ...parsePs(ps, panes, Number(me) || undefined),
   ]
+  // 자세히는 패널을 --detail 로 열었을 때만 — 도구 호출마다 도는 곳이라 평소엔 기록을 읽지 않는다
+  for (const a of list) {
+    if (!detailed) delete a.detail
+    else if (a.id) a.detail = await agentDetail($, a.id)
+  }
   await update($, agents, () => list)
   return list
 }
@@ -352,16 +373,22 @@ function padCells(x: string, n: number) {
 const brief = (x: string) => (x.split(' — ')[0] ?? '').replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
 
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
-async function toggleAgents($: EngineInterface) {
-  if ((await $.ui.panes()).some(x => x.id === AGENTS)) {
+// 에이전트 패널: 같은 모드로 다시 부르면 닫고, 다른 모드(짧게 ↔ --detail)면 그 모드로 다시 연다
+// detail 을 안 주면(버튼) 열려 있을 때 닫는다
+async function toggleAgents($: EngineInterface, detail?: boolean) {
+  const open = (await $.ui.panes()).some(x => x.id === AGENTS)
+  if (open && (detail === undefined || detail === detailed)) {
     await $.ui.close({ id: AGENTS })
     return '에이전트 패널을 닫았습니다'
   }
+  if (open) await $.ui.close({ id: AGENTS })
+  detailed = detail ?? false
   const list = await scanAgents($)
   const n = list.length
-  const want = n * 2 + new Set(list.map(a => a.who)).size * 2 + 2
-  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true, rows: Math.min(24, want) })
-  return `에이전트 ${n}개 — /workers 다시 입력하면 닫힘`
+  const want = n * 2 + list.reduce((k, a) => k + (a.detail?.length ?? 0), 0) + new Set(list.map(a => a.who)).size * 2 + 2
+  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}${detailed ? ' · 자세히' : ''}`, closeOnEscape: true, rows: Math.min(detailed ? 40 : 24, want) })
+  const cmd = detailed ? '/workers --detail' : '/workers'
+  return `에이전트 ${n}개${detailed ? ' · 자세히' : ''} — ${cmd} 다시 입력하면 닫힘`
 }
 
 async function togglePane($: EngineInterface) {
@@ -412,7 +439,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
-    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기' })
+    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기 · --detail 은 최근 도구·마지막 말까지', argumentHint: '[--detail]' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
       name: 'open_loop_add',
@@ -438,9 +465,9 @@ export const register: Register = on => {
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
 
-  on('command.run', { command: 'workers' }, async $ => {
+  on('command.run', { command: 'workers' }, async ($, e) => {
     await refresh($, await $.session.cwd())
-    return { text: await toggleAgents($) }
+    return { text: await toggleAgents($, /(^|\s)(--detail|-d)(\s|$)/.test(e.args)) }
   })
 
   on('command.run', { command: 'loops' }, async ($, e) => {
@@ -496,11 +523,12 @@ export const register: Register = on => {
               <Box flexDirection="column" paddingLeft={2}>
                 <Text wrap="truncate-end">{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
                 <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}{g.now ? ` · 지금 ${g.now}` : ''}</Text>
+                {(g.detail ?? []).map(d => <Text wrap="truncate-end">  {d}</Text>)}
               </Box>
             ))}
           </Box>
         ))}
-        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: /workers 다시 · 버튼 · ✕</Text>
+        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 자세히: /workers --detail · 닫기: 같은 명령 다시 · 버튼 · ✕</Text>
       </Box>
     )
   })
