@@ -3,7 +3,7 @@
 Claude Code 입력창 아래에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
 ```
-⚠ status: workspace · main ↑2 ✎3 · 열린 일 메모 2 · 미커밋 1
+⚠ status: workspace · main ↑2 ✎3 · 열린 일 3
 ```
 
 | 표시 | 뜻 |
@@ -11,7 +11,7 @@ Claude Code 입력창 아래에 지금 작업 중인 repo 상태와 끝내지 �
 | `workspace · main` | origin repo 이름 · 브랜치 (repo 밖이면 폴더) |
 | `↑2` | push 안 한 커밋 수 (0이면 숨김) |
 | `✎3` | 수정·새 파일 수 (0이면 숨김) |
-| `열린 일 …` | 끝내지 못한 일, 종류별 개수 |
+| `열린 일 3` | 끝내지 못한 일 개수 — `/loops` 로 옆 패널에 목록 |
 
 ## 설치
 
@@ -32,7 +32,7 @@ Claude Code 에서:
 | 미커밋 | 세션이 Edit·Write 로 고친 파일이 커밋 안 됨 | 그 파일들이 커밋되면 |
 | 미푸시 | 세션이 고친 repo 에 push 안 한 커밋 | push 하면 |
 | 변경 | 한 세션이 repo 2개 이상을 고침 (묶음 하나로) | 모든 repo 가 커밋·push 되면 |
-| 메모 | `/open-loops add` 또는 모델이 `open_loop_add` 로 적음 | `/open-loops close` · `open_loop_close` |
+| 메모 | `/loops add` 또는 모델이 `open_loop_add` 로 적음 | `/loops close` · `open_loop_close` |
 | 추정 | 최종 응답에 「확인하지 못했다」류 문장 (목록엔 숨김) | 다음 Stop 에 그 문장이 없으면 |
 
 - **세션 시작**: 다른 세션이 남긴 열린 일을 최대 5줄 모델 문맥에 넣습니다(15분 안에 활동한 세션 것은 진행 중이라 뺌).
@@ -41,15 +41,17 @@ Claude Code 에서:
 명령:
 
 ```
-/open-loops                       목록
-/open-loops add deploy-check 내일 09시 배포 결과 확인
-/open-loops close deploy-check
+/loops                       옆 패널에 목록([종류] 나이 · 누가 · 내용)
+/loops add deploy-check 내일 09시 배포 결과 확인
+/loops close deploy-check
 /where                            상태줄 다시 읽기
 ```
 
 장부 위치: `~/.claude/open-loops/` (항목 하나 = 파일 하나라 세션 여러 개가 동시에 써도 안전).
 
 ## 한계
+
+- 상태줄 글자는 누를 수 없어 목록은 `/loops` 로 엽니다. 「누가」 칸은 tmux 세션 이름, 없으면 세션 id 앞 8자리.
 
 - `sed`·스크립트로 고친 파일은 편집 기록에 안 남습니다(Edit·Write·MultiEdit·NotebookEdit 만).
 - 상태줄은 Claude 모바일 앱(Remote Control)에는 보이지 않습니다.

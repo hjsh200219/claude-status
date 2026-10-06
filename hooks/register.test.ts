@@ -130,7 +130,7 @@ test('open_loop_add 도구로 적고 open_loop_close 로 닫는다', async ($, o
   expect(g.items()[0].closed).toBe(true)
 })
 
-test('/open-loops 는 옆 패널에 종류·누가·내용 목록을 연다(tmux 없으면 세션 id)', async ($, on) => {
+test('/loops 는 옆 패널에 종류·누가·내용 목록을 연다(tmux 없으면 세션 id)', async ($, on) => {
   const g = world()
   g.install(on)
   g.w.files.set(`${DIR}/items/a.json`, JSON.stringify({ key: 'a', kind: 'note', ts: g.w.clock / 1000 - 7200, session: 'abcdef1234', text: '배포 뒤 확인' }))
@@ -142,7 +142,7 @@ test('/open-loops 는 옆 패널에 종류·누가·내용 목록을 연다(tmux
   let opened: any
   on('ui.open', ($: any, e: any) => { opened = e; return { value: { isPlaced: true } } })
   await status($, on)
-  const r: any = await $.command.run({ command: 'open-loops', args: '' } as any)
+  const r: any = await $.command.run({ command: 'loops', args: '' } as any)
   expect(opened).toMatchObject({ id: 'open-loops', title: '열린 일 2' })
   expect(r.text).toBe('열린 일 2건 — 옆 패널')
   const list = g.items().length // 장부는 그대로
