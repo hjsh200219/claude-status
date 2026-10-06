@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { editWarning } from './register'
+import { editWarning, parsePs } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const CFG = '/h/.claude'
@@ -178,4 +178,27 @@ test('입력창 위 「열린 일 N」 버튼을 누르면 패널이 열리고 �
     await ($ as any).ui.press({ plugin: 'status', key: 'loops', surface })
     expect(panes).toEqual([])
   }
+})
+
+test('에이전트 감지: edb-p·delegate codex exec·맨 claude -p 는 잡고, HUD 요약·상주 Codex·위임 안의 위임은 버린다', () => {
+  const ps = [
+    '  100     1 05:00:00 /x/claude-fixed/claude --resume abc --remote-control',          // 레인(DevOps1)
+    '  200   100    12:00 /bin/zsh -c source snapshot; python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘',
+    '  201   200    12:00 python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘',
+    '  202   201    11:59 /x/claude-fixed/claude -p --output-format stream-json --verbose', // edb
+    '  203   202    05:00 /x/claude-fixed/claude -p 하위 작업',                             // 위임 안의 위임 → 버림
+    '  300   100    01:03:10 sh /h/.claude/hud/account-line.sh',
+    '  301   300    01:03:10 node /h/omc/scripts/session-summary.mjs t.jsonl',
+    '  302   301    00:20 claude -p You are a session labeler',                                // HUD 요약 → 버림
+    '  400   100    03:00 python3 /h/.local/bin/delegate --engine codex',
+    '  401   400    02:59 /x/codex exec -C /h/workspace/pillcheck-app --skip-git-repo-check -s workspace-write -o /tmp/o.md -', // codex
+    '  500     1 2-09:54:47 /Applications/ChatGPT.app/x/codex app-server --listen stdio://',   // 상주 → 버림
+    '  600   100    00:40 /x/claude-fixed/claude -p 이 함수 테스트 써줘 --permission-mode bypassPermissions', // claude-as/맨 claude -p
+  ].join('\n')
+  const panes = '100 DevOps1\n'
+  expect(parsePs(ps, panes)).toEqual([
+    { who: 'edb', name: 'edb-p', desc: '필첵 PRD 검토해줘', age: '11분', lane: 'DevOps1' },
+    { who: 'codex', name: 'delegate', desc: 'pillcheck-app', age: '2분', lane: 'DevOps1' },
+    { who: 'claude', name: 'claude -p', desc: '이 함수 테스트 써줘 --permission-mode bypassPermissions', age: '방금', lane: 'DevOps1' },
+  ])
 })

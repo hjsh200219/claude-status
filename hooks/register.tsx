@@ -42,6 +42,11 @@ const rows = atom({ plugin: 'status', key: 'rows' } as const, [] as Row[])
 const head = atom({ plugin: 'status', key: 'head' } as const, '')
 // OMC HUD 의 세션 요약(OMC 가 10턴마다 만든다 · 없는 PC 는 빈 값)
 const summary = atom({ plugin: 'status', key: 'summary' } as const, '')
+// 지금 도는 에이전트(이 세션의 서브에이전트 + 이 Mac 의 edb-p·claude-as·codex exec)
+const AGENTS = 'agents'
+type Agent = { who: string; name: string; desc: string; age: string; lane: string }
+const agents = atom({ plugin: 'status', key: 'agents' } as const, [] as Agent[])
+const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
@@ -225,7 +230,83 @@ export async function editWarning($: EngineInterface, w: Where, me: string, p: s
   return msg
 }
 
+// ps 의 etime([[dd-]hh:]mm:ss) → 「N분」「N시간 M분」
+function ageOf(etime: string) {
+  const [d, rest] = etime.includes('-') ? etime.split('-') : ['0', etime]
+  const p = rest.split(':').map(Number)
+  const [h, m] = p.length === 3 ? [p[0], p[1]] : [0, p[0]]
+  const hours = Number(d) * 24 + h
+  return hours ? `${hours}시간 ${m}분` : m ? `${m}분` : '방금'
+}
+
+const clean = (x: string, n: number) => x.replace(/[\r\n\t]+/g, ' ').replace(/[`<>"']/g, '').trim().slice(0, n)
+
+// ps 출력(pid ppid etime command) + tmux 패널(pane_pid 세션) → 위임 에이전트 목록.
+// 잡는 것: edb-p·claude-as·delegate 아래의 `claude -p`, `codex exec`. 버리는 것: OMC HUD 요약(session-summary)이
+// 띄우는 `claude -p`, 상주 Codex(app-server·TUI), 다른 위임 안에서 다시 뜬 것(맨 위 하나만 센다).
+// 명령줄엔 작업 원문이 있어 화면에만 60자로 자르고 문맥엔 넣지 않는다.
+export function parsePs(ps: string, panes: string): Agent[] {
+  const procs = new Map<number, { ppid: number; etime: string; cmd: string }>()
+  for (const l of ps.split('\n')) {
+    const m = l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
+    if (m) procs.set(Number(m[1]), { ppid: Number(m[2]), etime: m[3], cmd: m[4] })
+  }
+  const lanes = new Map<number, string>()
+  for (const l of panes.split('\n')) {
+    const m = l.match(/^(\d+)\s+(.+)$/)
+    if (m) lanes.set(Number(m[1]), m[2].trim())
+  }
+  const base = (cmd: string) => (cmd.split(' ')[0] ?? '').split('/').pop() ?? ''
+  const isClaudeP = (cmd: string) => base(cmd) === 'claude' && /\s-p(\s|$)/.test(cmd)
+  const isCodexExec = (cmd: string) => base(cmd) === 'codex' && /^\S+\s+exec(\s|$)/.test(cmd)
+  const out: Agent[] = []
+  for (const [pid, p] of procs) {
+    const claude = isClaudeP(p.cmd)
+    if (!claude && !isCodexExec(p.cmd)) continue
+    const chain: { pid: number; cmd: string }[] = []
+    for (let q = procs.get(p.ppid), qp = p.ppid, i = 0; q && i < 30; qp = q.ppid, q = procs.get(q.ppid), i++) chain.push({ pid: qp, cmd: q.cmd })
+    const up = chain.map(c => c.cmd).join('\n')
+    if (/session-summary|omc-hud|account-line/.test(up)) continue
+    if (chain.some(c => isClaudeP(c.cmd) || isCodexExec(c.cmd))) continue // 위임 안의 위임은 맨 위만
+    const lane = chain.map(c => lanes.get(c.pid)).find(Boolean) ?? ''
+    const via = /(^|\/)delegate(\s|$)/m.test(up) ? 'delegate' : ''
+    if (claude) {
+      const edb = chain.find(c => /(^|\/)edb-p(\s|$)/.test(c.cmd))
+      const as = up.match(/(?:^|\/)claude-as\s+(\S+)/m)
+      // claude-as 는 exec 로 claude 가 되어 부모 목록에 안 남는다 — 계정을 모르면 claude 로 둔다
+      const desc = edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : (p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
+      out.push({ who: edb ? 'edb' : as ? as[1] : 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane })
+    } else {
+      const dir = p.cmd.match(/\s-C\s+(\S+)/)?.[1] ?? ''
+      out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane })
+    }
+  }
+  return out
+}
+
+async function scanAgents($: EngineInterface) {
+  const r = await $.process.run(['sh', '-c', 'ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null']).catch(() => undefined)
+  const [ps = '', panes = '', acct = ''] = (r?.stdout ?? '').split('@@\n')
+  const t = await now($)
+  // 이 세션의 서브에이전트 — 레인 계정은 HUD 가 남긴 기록(없으면 claude)
+  const mine = (await $.agent.list().catch(() => [])).filter(a => ['running', 'pending', 'waiting'].includes(a.status))
+  for (const a of mine) if (!firstSeen.has(a.id)) firstSeen.set(a.id, t)
+  const who = acct.trim().split(/\s+/)[0] || 'claude'
+  const list: Agent[] = [
+    ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션' })),
+    ...parsePs(ps, panes),
+  ]
+  await update($, agents, () => list)
+  return list
+}
+
 // 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
+async function toggleAgents($: EngineInterface) {
+  if ((await $.ui.panes()).some(x => x.id === AGENTS)) return void (await $.ui.close({ id: AGENTS }))
+  const n = (await scanAgents($)).length
+  await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true })
+}
+
 async function togglePane($: EngineInterface) {
   if ((await $.ui.panes()).some(x => x.id === PANE)) {
     await $.ui.close({ id: PANE })
@@ -263,6 +344,7 @@ async function refresh($: EngineInterface, cwd: string) {
   const sum = await readJson<{ summary?: string }>($, `${await $.session.root()}/.omc/state/session-summary-${await $.session.id()}.json`)
   const note = (sum?.summary ?? '').replace(/[\r\n]+/g, ' ').slice(0, 40)
   await update($, summary, () => note)
+  await scanAgents($)
   return [where, open, note].filter(Boolean).join(' · ')
 }
 
@@ -312,7 +394,8 @@ export const register: Register = on => {
     const where = await read($, head)
     const sum = await read($, summary)
     const n = (await read($, rows)).length
-    if ((!where && !n && !sum) || e.props.hasSurvey) return next(e)
+    const a = (await read($, agents)).length
+    if ((!where && !n && !sum && !a) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
       <Box flexDirection="row" justifyContent="space-between" width="100%">
@@ -320,10 +403,44 @@ export const register: Register = on => {
           {where && <Text dimColor>{where}</Text>}
           {sum && <Text dimColor>· {sum}</Text>}
         </Box>
-        {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
+        <Box flexDirection="row" gap={1}>
+          {a > 0 && <Button key="agents" label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
+          {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
+        </Box>
       </Box>
     )
   })
+
+  on('ui.render', { component: 'Pane', requestId: AGENTS }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const list = await read($, agents)
+    const groups = new Map<string, Agent[]>()
+    for (const g of list) groups.set(g.who, [...(groups.get(g.who) ?? []), g])
+    return (
+      <Box flexDirection="column">
+        {list.length === 0 && <Text dimColor>도는 에이전트 없음</Text>}
+        {[...groups].map(([who, gs]) => (
+          <Box flexDirection="column" marginBottom={1}>
+            <Text bold>{who} {gs.length}</Text>
+            {gs.map(g => (
+              <Box flexDirection="column" paddingLeft={2}>
+                <Text wrap="truncate-end">{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
+                <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}</Text>
+              </Box>
+            ))}
+          </Box>
+        ))}
+        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: 버튼 다시 · ✕</Text>
+      </Box>
+    )
+  })
+
+  // 턴 중에도 목록이 따라오게 — 도구 호출이 끝날 때마다 다시 읽는다(화면 표시만, 모델 문맥엔 넣지 않는다)
+  on('tool.call', async ($, e, next) => {
+    const r = await next(e)
+    await scanAgents($).catch(() => undefined)
+    return r
+  }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)

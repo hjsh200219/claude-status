@@ -3,7 +3,7 @@
 Claude Code 입력창 위에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
 ```
-workspace · main ↑2 ✎3 · 세션 요약               [열린 일 3]
+workspace · main ↑2 ✎3 · 세션 요약      [에이전트 2] [열린 일 3]
 ```
 
 | 표시 | 뜻 |
@@ -12,6 +12,7 @@ workspace · main ↑2 ✎3 · 세션 요약               [열린 일 3]
 | `↑2` | push 안 한 커밋 수 (0이면 숨김) |
 | `✎3` | 수정·새 파일 수 (0이면 숨김) |
 | `[열린 일 3]` | 끝내지 못한 일 개수 버튼 — 누르거나 `/loops` 로 목록 패널 열기·닫기 |
+| `[에이전트 2]` | 지금 도는 에이전트 버튼 — 누르면 계정별(Claude 계정·edb·codex) 목록, 경과 시간·레인 |
 | `· 세션 요약` | oh-my-claudecode 가 만든 세션 요약(OMC `sessionSummary` 를 켠 PC 만) |
 
 ## 설치
@@ -49,6 +50,13 @@ Claude Code 에서:
 ```
 
 장부 위치: `~/.claude/open-loops/` (항목 하나 = 파일 하나라 세션 여러 개가 동시에 써도 안전).
+
+## 에이전트
+
+- 이 세션의 서브에이전트(Agent 도구) — 계정은 HUD 가 남긴 레인 계정, 없으면 `claude`
+- 이 Mac 에서 도는 위임: `edb-p`(edb) · `delegate` · `codex exec` · 그 밖의 `claude -p`
+- 빼는 것: oh-my-claudecode HUD 요약이 띄우는 `claude -p`, ChatGPT 앱 등 상주 Codex, 위임 안에서 다시 뜬 것
+- 도구 호출·턴이 끝날 때마다 다시 읽습니다. 명령줄의 작업 원문은 화면에만 60자로 보이고 모델 문맥엔 넣지 않습니다.
 
 ## 한계
 
