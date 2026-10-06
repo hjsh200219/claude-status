@@ -1,4 +1,4 @@
-# status — Claude Code 입력창 위 repo 줄 + 열린 일 장부
+# meta-status — Claude Code 입력창 위 repo 줄 + 열린 일 장부
 
 Claude Code 입력창 위에 지금 작업 중인 repo 상태와 끝내지 못한 일을 한 줄로 보여 줍니다.
 
@@ -20,7 +20,7 @@ workspace · main ↑2 ✎3 · 세션 요약      [에이전트 2] [열린 일 3
 Claude Code 에서:
 
 ```
-/plugin install status --marketplace hjsh200219/claude-status
+/plugin install meta-status --marketplace hjsh200219/meta-status
 ```
 
 `y` 로 마켓플레이스를 추가하고 범위는 user 를 고릅니다. 이미 떠 있는 세션은 `/reload-plugins` 한 번.

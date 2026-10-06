@@ -125,9 +125,9 @@ test('open_loop_add 도구로 적고 open_loop_close 로 닫는다', async ($, o
   const g = world()
   g.install(on)
   await status($, on)
-  await $.tool.call({ tool: 'mcp__status__open_loop_add', input: { key: 'deploy-check', text: '내일 09시 배포 결과 확인' } } as any)
+  await $.tool.call({ tool: 'mcp__meta-status__open_loop_add', input: { key: 'deploy-check', text: '내일 09시 배포 결과 확인' } } as any)
   expect(g.items()).toMatchObject([{ key: 'deploy-check', kind: 'note', lane: 'DevOps1', text: '내일 09시 배포 결과 확인' }])
-  await $.tool.call({ tool: 'mcp__status__open_loop_close', input: { key: 'deploy-check' } } as any)
+  await $.tool.call({ tool: 'mcp__meta-status__open_loop_close', input: { key: 'deploy-check' } } as any)
   expect(g.items()[0].closed).toBe(true)
 })
 
@@ -172,10 +172,10 @@ test('입력창 위 「열린 일 N」 버튼을 누르면 패널이 열리고 �
   await status($, on)
   for (const surface of ['terminal', 'desktop'] as const) {
     panes = []
-    await ($ as any).ui.mount({ plugin: 'status', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } })
-    await ($ as any).ui.press({ plugin: 'status', key: 'loops', surface })
+    await ($ as any).ui.mount({ plugin: 'meta-status', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } })
+    await ($ as any).ui.press({ plugin: 'meta-status', key: 'loops', surface })
     expect(panes).toEqual([{ id: 'open-loops' }])
-    await ($ as any).ui.press({ plugin: 'status', key: 'loops', surface })
+    await ($ as any).ui.press({ plugin: 'meta-status', key: 'loops', surface })
     expect(panes).toEqual([])
   }
 })

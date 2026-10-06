@@ -1,11 +1,11 @@
 {
-  "name": "status",
+  "name": "meta-status",
   "owner": {
     "name": "hjsh200219"
   },
   "plugins": [
     {
-      "name": "status",
+      "name": "meta-status",
       "source": "./"
     }
   ],

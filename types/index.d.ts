@@ -1,6 +1,6 @@
 declare module 'claude-code' {
   interface PluginState {
-    status: {
+    'meta-status': {
       rows: { kind: string; age: string; who: string; text: string; key: string }[]
       head: string
       summary: string

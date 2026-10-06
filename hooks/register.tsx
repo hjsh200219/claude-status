@@ -37,15 +37,15 @@ let where: Promise<Where> | undefined
 // 옆 패널이 그리는 목록(상태줄을 다시 읽을 때마다 갱신)
 const PANE = 'open-loops'
 type Row = { kind: string; age: string; who: string; text: string; key: string }
-const rows = atom({ plugin: 'status', key: 'rows' } as const, [] as Row[])
+const rows = atom({ plugin: 'meta-status', key: 'rows' } as const, [] as Row[])
 // 입력창 위 줄의 repo 부분(repo · 브랜치 ↑✎)
-const head = atom({ plugin: 'status', key: 'head' } as const, '')
+const head = atom({ plugin: 'meta-status', key: 'head' } as const, '')
 // OMC HUD 의 세션 요약(OMC 가 10턴마다 만든다 · 없는 PC 는 빈 값)
-const summary = atom({ plugin: 'status', key: 'summary' } as const, '')
+const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
 // 지금 도는 에이전트(이 세션의 서브에이전트 + 이 Mac 의 edb-p·claude-as·codex exec)
 const AGENTS = 'agents'
 type Agent = { who: string; name: string; desc: string; age: string; lane: string }
-const agents = atom({ plugin: 'status', key: 'agents' } as const, [] as Agent[])
+const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
@@ -468,12 +468,12 @@ export const register: Register = on => {
     )
   })
 
-  on('tool.call', { tool: 'mcp__status__open_loop_add' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__meta-status__open_loop_add' }, async ($, e) => {
     const i = e.input as { key: string; text: string }
     return { result: await addItem($, i.key, i.text, await $.session.id()) }
   }).catch(() => ({ deny: '열린 일 장부를 읽거나 쓰지 못했습니다' }))
 
-  on('tool.call', { tool: 'mcp__status__open_loop_close' }, async ($, e) => {
+  on('tool.call', { tool: 'mcp__meta-status__open_loop_close' }, async ($, e) => {
     const i = e.input as { key: string; note?: string }
     return { result: await closeItem($, i.key, i.note) }
   }).catch(() => ({ deny: '열린 일 장부를 읽거나 쓰지 못했습니다' }))
