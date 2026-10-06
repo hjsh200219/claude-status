@@ -1,5 +1,5 @@
 import { test, expect } from 'claude-code/testing'
-import { editWarning, parsePs } from './register'
+import { actOf, editWarning, parsePs } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const CFG = '/h/.claude'
@@ -237,4 +237,26 @@ test('/loops close 번호 — 패널 순서(레인별 · 큰 묶음 먼저 · �
   const r: any = await $.command.run({ command: 'loops', args: 'close 2' } as any)
   expect(r.text).toBe('닫음: a')
   expect(g.items().filter(i => i.closed).map(i => i.key)).toEqual(['a'])
+})
+
+test('actOf — 도구 호출을 「도구 대표값」 한 줄로', () => {
+  expect(actOf('Read', { file_path: '/h/workspace/a/register.tsx' })).toBe('Read register.tsx')
+  expect(actOf('Bash', { command: 'git status', description: '상태 확인' })).toBe('Bash 상태 확인')
+  expect(actOf('Grep', { pattern: 'scanAgents' })).toBe('Grep scanAgents')
+  expect(actOf('mcp__x__y', {})).toBe('x__y')
+})
+
+test('서브에이전트가 도구를 부르면 패널 줄에 「지금」이 붙는다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }] }))
+  on('tool.call', () => ({ result: 'ok' }))
+  await status($, on)
+  await $.tool.call({ tool: 'Read', input: { file_path: '/x/foo.ts' }, agentId: 'a1' } as any)
+  await $.tool.call({ tool: 'Grep', input: { pattern: 'bar' }, agentId: 'a1' } as any)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
+    expect(await ui.find({ type: 'Text', text: /지금 Grep bar · 2번째/ })).toBeDefined()
+    await ui.unmount()
+  }
 })

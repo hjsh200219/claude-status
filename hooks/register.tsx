@@ -44,9 +44,27 @@ const head = atom({ plugin: 'meta-status', key: 'head' } as const, '')
 const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
 // 지금 도는 에이전트(이 세션의 서브에이전트 + 이 세션이 띄운 edb-p·claude-as·codex exec)
 const AGENTS = 'agents'
-type Agent = { who: string; name: string; desc: string; age: string; lane: string }
+type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
+const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
+
+// 도구 호출 한 줄: 「Read register.tsx」「Bash git status」 — 입력에서 처음 보이는 대표 문자열
+const ACT_KEYS = ['description', 'file_path', 'notebook_path', 'path', 'pattern', 'query', 'url', 'command', 'prompt']
+export function actOf(tool: string, input: unknown) {
+  const i = (input ?? {}) as Record<string, unknown>
+  const k = ACT_KEYS.find(k => typeof i[k] === 'string' && i[k])
+  const v = k ? String(i[k]) : ''
+  return clean(`${tool.replace(/^mcp__/, '')} ${k?.endsWith('path') ? v.split('/').pop() : v}`, 50)
+}
+
+// 서브에이전트가 도구를 부르기 직전 — 패널의 그 줄만 고친다(ps 를 다시 돌리지 않는다)
+async function noteAct($: EngineInterface, id: string, tool: string, input: unknown) {
+  const n = (doing.get(id)?.n ?? 0) + 1
+  const now = `${actOf(tool, input)} · ${n}번째`
+  doing.set(id, { now, n })
+  await update($, agents, l => l.map(a => (a.id === id ? { ...a, now } : a)))
+}
 
 // 장부 폴더(CLAUDE_CONFIG_DIR 또는 ~/.claude 아래)와 전환 모드 여부 — 프로세스마다 한 번
 async function locate($: EngineInterface): Promise<Where> {
@@ -299,9 +317,10 @@ async function scanAgents($: EngineInterface) {
   // 이 세션의 서브에이전트 — 레인 계정은 HUD 가 남긴 기록(없으면 claude)
   const mine = (await $.agent.list().catch(() => [])).filter(a => ['running', 'pending', 'waiting'].includes(a.status))
   for (const a of mine) if (!firstSeen.has(a.id)) firstSeen.set(a.id, t)
+  for (const id of doing.keys()) if (!mine.some(a => a.id === id)) doing.delete(id)
   const who = acct.trim().split(/\s+/)[0] || 'claude'
   const list: Agent[] = [
-    ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션' })),
+    ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
     ...parsePs(ps, panes, Number(me) || undefined),
   ]
   await update($, agents, () => list)
@@ -476,7 +495,7 @@ export const register: Register = on => {
             {gs.map(g => (
               <Box flexDirection="column" paddingLeft={2}>
                 <Text wrap="truncate-end">{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
-                <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}</Text>
+                <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}{g.now ? ` · 지금 ${g.now}` : ''}</Text>
               </Box>
             ))}
           </Box>
@@ -487,7 +506,9 @@ export const register: Register = on => {
   })
 
   // 턴 중에도 목록이 따라오게 — 도구 호출이 끝날 때마다 다시 읽는다(화면 표시만, 모델 문맥엔 넣지 않는다)
+  // 서브에이전트의 도구 호출은 부르기 전에 「지금 하는 일」로 적는다(도는 동안 보이게)
   on('tool.call', async ($, e, next) => {
+    if (e.agentId) await noteAct($, e.agentId, e.tool, e.input).catch(() => undefined)
     const r = await next(e)
     await scanAgents($).catch(() => undefined)
     return r
