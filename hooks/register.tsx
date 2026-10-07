@@ -56,6 +56,11 @@ const hidden = atom({ plugin: 'meta-status', key: 'hidden' } as const, false)
 const KICK_EVERY = 30 // 초
 let lastKick = 0
 const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
+// 도는 도구 호출 수 — 하나라도 돌면 SCAN_EVERY 마다 에이전트를 다시 읽는다
+const SCAN_EVERY = 15_000 // ms
+let running = 0
+let ticker: { cancel: () => void } | undefined
+const stopTicker = () => { ticker?.cancel(); ticker = undefined; running = 0 }
 
 // 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중) · 총 횟수
 async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
@@ -614,18 +619,23 @@ export const register: Register = on => {
             ))}
           </Box>
         ))}
-        <Text dimColor>도구 호출·턴이 끝날 때마다 갱신 · 닫기: /workers 다시 · 버튼 · ✕</Text>
+        <Text dimColor>도구가 도는 동안 15초마다·끝날 때 갱신 · 닫기: /workers 다시 · 버튼 · ✕</Text>
       </Box>
     )
   })
 
   // 턴 중에도 목록이 따라오게 — 도구 호출이 끝날 때마다 다시 읽는다(화면 표시만, 모델 문맥엔 넣지 않는다)
   // 서브에이전트의 도구 호출은 부르기 전에 「지금 하는 일」로 적는다(도는 동안 보이게)
+  // 도구가 도는 동안에도 SCAN_EVERY 마다 읽는다 — 포그라운드 Bash 로 몇 분 도는 /codex·/edb-p 는 끝난 뒤엔 이미 없다(10-07)
   on('tool.call', async ($, e, next) => {
     if (e.agentId) await noteAct($, e.agentId, e.tool, e).catch(() => undefined)
-    const r = await next(e)
-    await scanAgents($).catch(() => undefined)
-    return r
+    if (running++ === 0) ticker = $.clock.every(SCAN_EVERY, () => { void scanAgents($).catch(() => undefined) })
+    try {
+      return await next(e)
+    } finally {
+      if (--running <= 0) stopTicker()
+      await scanAgents($).catch(() => undefined)
+    }
   }).catch(($, e, next) => next(e))
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
@@ -697,6 +707,7 @@ export const register: Register = on => {
   // 세션 종료 기록(record-stop): 이 세션이 고친 파일 중 미커밋·미푸시, 최종 응답의 「확인하지 못했다」류 문장
   on('classic.Stop', async ($, e, next) => {
     const r = await next(e)
+    stopTicker() // 턴이 끝났는데 남은 타이머(중단된 도구 호출)는 여기서 끈다
     const w = await locate($)
     if (w.legacy) return r
     const sid = e.session_id

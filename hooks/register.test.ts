@@ -1,4 +1,4 @@
-import { test, expect } from 'claude-code/testing'
+import { test, expect, mock } from 'claude-code/testing'
 import { actOf, editWarning, parsePs, subcommand } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
@@ -407,4 +407,44 @@ test('요약 버튼을 누르면 이 세션 프롬프트 패널(태그·도구 �
   await ui.unmount()
   await ($ as any).ui.press({ plugin: 'meta-status', key: 'prompts', surface: 'terminal' })
   expect(panes).toEqual([])
+})
+
+test('도구가 도는 동안 15초마다 에이전트를 다시 읽고, 끝나면 멈춘다 — 포그라운드 Bash 로 도는 /codex 도 잡힌다', async ($, on) => {
+  const clock = mock.clock(on, { now: 1_000_000_000_000 })
+  let codexUp = false
+  let scans = 0
+  on('process.run', ($: any, e: any) => {
+    if (e.argv[0] !== 'sh') return { value: out('', 1) }
+    scans++
+    const ps = ['  100     1 05:00:00 /x/claude --resume abc', ...(codexUp ? ['  401   100    00:30 /h/.local/bin/codex exec IMPORTANT -C /h/workspace -s read-only --json'] : [])]
+    return { value: out(['100', ps.join('\n'), '', ''].join('\n@@\n')) }
+  })
+  on('agent.list', () => ({ value: [] }))
+  on('ui.panes', () => ({ value: [] }))
+  let release!: () => void
+  on('env.get', () => ({ value: undefined }))
+  for (const ev of ['PreToolUse', 'PostToolUse']) on(`classic.${ev}`, () => ({}))
+  on('tool.call', () => new Promise(res => { release = () => res({ result: { text: 'ok' } }) }))
+  const call = ($.tool as any).call({ tool: 'Bash', command: 'codex exec …' })
+  await clock.advance(1)
+  codexUp = true
+  const before = scans
+  await clock.advance(15_000)
+  expect(scans).toBe(before + 1)
+  release()
+  await call
+  codexUp = false
+  const after = scans
+  await clock.advance(60_000)
+  expect(scans).toBe(after)
+})
+
+test('/codex 가 띄운 codex exec(프롬프트가 -C 앞) 도 이 세션 에이전트로 잡힌다', () => {
+  const ps = [
+    '  100     1 05:00:00 /x/claude --resume abc',
+    '  300   100    00:40 /bin/zsh -c source snapshot; _gstack_codex_timeout_wrapper 600 codex exec',
+    '  301   300    00:40 /opt/homebrew/bin/gtimeout 600 /h/.local/bin/codex exec IMPORTANT: Do NOT read -C /h/workspace -s read-only --json',
+    '  302   301    00:40 /h/.local/bin/codex exec IMPORTANT: Do NOT read -C /h/workspace -s read-only --json',
+  ].join('\n')
+  expect(parsePs(ps, '', 100).map(a => [a.who, a.name, a.desc])).toEqual([['codex', 'exec', 'workspace']])
 })
