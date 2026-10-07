@@ -47,6 +47,11 @@ const AGENTS = 'agents'
 type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[] }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
+// 입력창 위 줄 끄기(/meta-status off) — 레인(세션)마다 따로. 한 레인에서 끈 것이 다른 레인 줄까지 지우지 않게
+const hidden = atom({ plugin: 'meta-status', key: 'hidden' } as const, false)
+// 줄이 비어 있을 때 그리면서 한 번 다시 읽는다 — /clear·재로드 직후엔 턴이 끝나기 전까지 줄이 비어 있었다(10-07 DevOps1·2)
+const KICK_EVERY = 30 // 초
+let lastKick = 0
 const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
 
 // 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중) · 총 횟수
@@ -443,6 +448,7 @@ export const register: Register = on => {
   on('session.start', async ($, e, next) => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
+    await $.command.register({ name: 'meta-status', description: '입력창 위 meta-status 줄 켜기·끄기(이 레인만)', argumentHint: 'on | off' })
     await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기(마지막 말·최근 도구까지)' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
@@ -468,6 +474,16 @@ export const register: Register = on => {
   })
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
+
+  on('command.run', { command: 'meta-status' }, async ($, e) => {
+    const arg = e.args.trim().toLowerCase()
+    if (arg === 'on' || arg === 'off') {
+      await update($, hidden, () => arg === 'off')
+      if (arg === 'on') await refresh($, await $.session.cwd())
+      return { text: arg === 'on' ? 'meta-status 줄을 켰습니다(이 레인)' : 'meta-status 줄을 껐습니다(이 레인) — /meta-status on 으로 다시 켭니다' }
+    }
+    return { text: `meta-status 줄: ${(await read($, hidden)) ? '꺼짐' : '켜짐'} — /meta-status on | off` }
+  })
 
   on('command.run', { command: 'workers' }, async $ => {
     await refresh($, await $.session.cwd())
@@ -496,6 +512,14 @@ export const register: Register = on => {
     const sum = await read($, summary)
     const n = (await read($, rows)).length
     const a = (await read($, agents)).length
+    if (await read($, hidden)) return next(e)
+    if (!where) {
+      const t = await now($)
+      if (t - lastKick > KICK_EVERY) {
+        lastKick = t
+        void $.session.cwd().then(cwd => refresh($, cwd)).catch(() => undefined)
+      }
+    }
     if ((!where && !n && !sum && !a) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (

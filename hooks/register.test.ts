@@ -323,3 +323,37 @@ test('에이전트 감지: 셸 별칭이 붙인 codex --yolo exec 도 잡는다'
     { who: 'codex', name: 'exec', desc: 'meta-plan', age: '4분', lane: 'DevOps1' },
   ])
 })
+
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } } as const
+
+test('/meta-status off 면 입력창 위 줄을 그리지 않고 on 이면 다시 그린다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  on('ui.render', ($: any, e: any) => { const { Text } = $.ui.resolve(e); return h(Text, {}, '엔진 기본') })
+  await status($, on)
+  const shows = async () => {
+    const ui = await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
+    const hit = await ui.find({ type: 'Text', text: /workspace · main/ })
+    await ui.unmount()
+    return hit !== undefined
+  }
+  expect(await shows()).toBe(true)
+  expect(((await $.command.run({ command: 'meta-status', args: 'off' } as any)) as any).text).toContain('껐습니다')
+  expect(await shows()).toBe(false)
+  expect(((await $.command.run({ command: 'meta-status', args: '' } as any)) as any).text).toContain('꺼짐')
+  await $.command.run({ command: 'meta-status', args: 'on' } as any)
+  expect(await shows()).toBe(true)
+})
+
+test('줄이 비어 있으면 그리면서 한 번 다시 읽는다(/clear·재로드 직후)', async ($, on) => {
+  const g = world()
+  g.install(on)
+  on('ui.render', ($: any, e: any) => { const { Text } = $.ui.resolve(e); return h(Text, {}, '엔진 기본') })
+  // session.start 를 거치지 않아 줄이 빈 상태 — /clear 직후와 같다
+  const first = await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
+  await first.unmount()
+  await new Promise(r => setTimeout(r, 50))
+  const ui = await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
+  expect(await ui.find({ type: 'Text', text: /workspace · main/ })).toBeDefined()
+  await ui.unmount()
+})

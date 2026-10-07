@@ -49,6 +49,8 @@ Claude Code 에서:
 /loops close deploy-check      키로 닫기
 /loops close 3                 패널 번호로 닫기
 /where                            입력창 위 줄 다시 읽기
+/meta-status off                  입력창 위 줄 끄기(이 레인만 · 패널·장부는 그대로)
+/meta-status on                   다시 켜기 · 인자 없이 부르면 지금 상태
 ```
 
 장부 위치: `~/.claude/open-loops/` (항목 하나 = 파일 하나라 세션 여러 개가 동시에 써도 안전).
@@ -63,6 +65,7 @@ Claude Code 에서:
 
 ## 한계
 
+- `/clear`·플러그인 재로드 직후 줄이 비어 있으면 그릴 때 한 번 다시 읽습니다(30초에 한 번까지). 화면에 「plugin panel hidden」이 보이면 플러그인 영역이 접힌 것이니 ctrl+x ctrl+a 로 펼칩니다.
 - 설문이 떠 있는 동안은 입력창 위 줄이 비켜 줍니다. 터미널 폭이 110칸 미만이면 패널이 옆이 아니라 대화 안에 열립니다. 「누가」 칸은 tmux 세션 이름, 없으면 세션 id 앞 8자리.
 
 - `sed`·스크립트로 고친 파일은 편집 기록에 안 남습니다(Edit·Write·MultiEdit·NotebookEdit 만).
