@@ -90,8 +90,11 @@ async function noteAct($: EngineInterface, id: string, tool: string, input: unkn
 async function locate($: EngineInterface): Promise<Where> {
   where ??= (async () => {
     // META_STATUS_NO_LEGACY=1 이면 원본 스크립트가 있어도 mod 장부를 쓴다(데모·시험용)
-    const r = await $.process.run(['sh', '-c', 'printf "%s\\n%s\\n%s" "${CLAUDE_CONFIG_DIR:-$HOME/.claude}" "$HOME" "${META_STATUS_NO_LEGACY:-}"'])
-    const [cfg, home, noLegacy] = r.stdout.split('\n')
+    // sh 없이 env 로 읽는다 — Windows 엔 sh 가 없어 여기서 막히면 /workers·/where·상태 줄이 통째로 죽는다
+    const slash = (x?: string) => x?.replace(/\\/g, '/') || undefined
+    const home = slash(await $.env.get('HOME')) ?? slash(await $.env.get('USERPROFILE')) ?? ''
+    const cfg = slash(await $.env.get('CLAUDE_CONFIG_DIR')) ?? `${home}/.claude`
+    const noLegacy = await $.env.get('META_STATUS_NO_LEGACY')
     const cli = `${home}/workspace/scripts/open-loops.py`
     return { dir: `${cfg}/open-loops`, legacy: !noLegacy && (await $.fs.exists(cli)) ? cli : undefined }
   })()
@@ -236,7 +239,9 @@ async function closeItem($: EngineInterface, key: string, note = '') {
 
 // 레인 = tmux 세션 이름(tmux 밖이면 빈 값)
 async function laneOf($: EngineInterface) {
-  const r = await $.process.run(['sh', '-c', '[ -n "$TMUX_PANE" ] && tmux display-message -p -t "$TMUX_PANE" "#{session_name}"']).catch(() => undefined)
+  const pane = await $.env.get('TMUX_PANE')
+  if (!pane) return ''
+  const r = await $.process.run(['tmux', 'display-message', '-p', '-t', pane, '#{session_name}']).catch(() => undefined)
   return r?.exitCode === 0 ? r.stdout.trim() : ''
 }
 

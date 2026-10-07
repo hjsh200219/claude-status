@@ -6,7 +6,8 @@ const CFG = '/h/.claude'
 const DIR = `${CFG}/open-loops`
 
 // 메모리 위 가짜 PC: 파일·git 상태·시계
-function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) {
+function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string; env?: Record<string, string>; noSh?: boolean } = {}) {
+  const env: Record<string, string> = opts.env ?? { HOME: '/h', CLAUDE_CONFIG_DIR: CFG, TMUX_PANE: '%1' }
   const files = new Map<string, string>()
   const mtimes = new Map<string, number>()
   const w = { files, mtimes, stats: [] as string[], dirty: [' M a.ts', '?? b.ts', ' M c.ts'], ahead: 2, clock: 1_000_000_000_000 }
@@ -14,7 +15,7 @@ function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) 
     const cmd = argv.join(' ')
     // 모든 git 호출은 남의 repo 설정(fsmonitor·훅)을 끄고 돈다
     if (argv[0] === 'git' && !cmd.includes('core.fsmonitor=false')) throw new Error(`안전 옵션 없는 git: ${cmd}`)
-    if (cmd.includes('CLAUDE_CONFIG_DIR')) return out(`${CFG}\n/h`)
+    // Windows: sh·ps·tmux 가 없다 — 실행 자체가 실패한다
     if (cmd.includes('tmux')) return out('DevOps1\n')
     if (argv[0] === 'python3' && argv.includes('list')) return out('[{"kind":"note"},{"kind":"note"},{"kind":"watch"}]')
     if (opts.inRepo === false) return out('', 128)
@@ -36,7 +37,8 @@ function world(opts: { legacy?: boolean; inRepo?: boolean; cwd?: string } = {}) 
       on('session.id', () => ({ value: 'me-session' }))
       on('session.root', () => ({ value: '/h/workspace' }))
       on('session.cwd', () => ({ value: opts.cwd ?? '/h/workspace' }))
-      on('process.run', ($: any, e: any) => ({ value: run(e.argv) }))
+      on('process.run', ($: any, e: any) => opts.noSh && ['sh', 'tmux', 'ps'].includes(e.argv[0]) ? { deny: `Command '${e.argv[0]}' not found` } : { value: run(e.argv) })
+      on('env.get', ($: any, e: any) => ({ value: env[e.name] }))
       on('fs.exists', ($: any, e: any) => ({ value: opts.legacy ? true : files.has(e.path) }))
       on('fs.read', ($: any, e: any) => files.has(e.path) ? { value: files.get(e.path) } : { deny: 'ENOENT' })
       on('fs.write', ($: any, e: any) => { files.set(e.path, e.text); return { value: undefined } })
@@ -356,4 +358,21 @@ test('줄이 비어 있으면 그리면서 한 번 다시 읽는다(/clear·재�
   const ui = await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
   expect(await ui.find({ type: 'Text', text: /workspace · main/ })).toBeDefined()
   await ui.unmount()
+})
+
+test('Windows(sh·ps·tmux 없음, HOME 대신 USERPROFILE): 상태 줄·/workers·/loops 가 산다', async ($, on) => {
+  const g = world({ noSh: true, env: { USERPROFILE: 'C:\\Users\\pys' } })
+  g.install(on)
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }] }))
+  const shown = await status($, on)
+  expect(await shown()).toBe('workspace · main ↑2 ✎3')
+  expect(((await $.command.run({ command: 'workers', args: '' } as any)) as any).text).toBe('에이전트 1개 — /workers 다시 입력하면 닫힘')
+  await $.command.run({ command: 'loops', args: 'add k 배포 확인' } as any)
+  // macOS 시험 엔진은 C: 경로를 상대 경로로 보고 mod 폴더 앞에 붙인다 — 뒷부분만 본다
+  const saved = [...g.w.files.keys()].filter(k => k.includes('C:/Users/pys/.claude/open-loops/items/'))
+  expect(saved.length).toBe(1)
+  expect(JSON.parse(g.w.files.get(saved[0])!).lane).toBe('')
 })
