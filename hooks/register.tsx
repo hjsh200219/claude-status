@@ -564,13 +564,15 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" justifyContent="space-between" width="100%">
         <Box flexDirection="row" gap={1} flexGrow={1}>
-          {where && <Text dimColor>{where}</Text>}
+          {where && <Text color="claude">{where}</Text>}
           {sum && <Text dimColor>·</Text>}
           {sum && <Button key="prompts" label={sum} onPress={async () => { await togglePrompts($) }} />}
         </Box>
         <Box flexDirection="row" gap={1}>
-          {a > 0 && <Button key="agents" label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
-          {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
+          {a > 0 && <Text color="blue">●</Text>}
+          {a > 0 && <Button key="agents" hover={{ scope: 'agents', color: 'blue' }} label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
+          {n > 0 && <Text color="error">●</Text>}
+          {n > 0 && <Button key="loops" hover={{ scope: 'loops', color: 'error' }} label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
         </Box>
       </Box>
     )
