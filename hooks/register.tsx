@@ -564,7 +564,7 @@ export const register: Register = on => {
     return (
       <Box flexDirection="row" justifyContent="space-between" width="100%">
         <Box flexDirection="row" gap={1} flexGrow={1}>
-          {where && <Text color="claude">{where}</Text>}
+          {where && <Text color="#ff8700">{where}</Text>}
           {sum && <Text dimColor>·</Text>}
           {sum && <Button key="prompts" label={sum} onPress={async () => { await togglePrompts($) }} />}
         </Box>
