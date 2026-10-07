@@ -305,12 +305,22 @@ export function subcommand(cmd: string) {
   return ''
 }
 
+// 위임 작업 파일(edb-p·delegate 의 stdin)에서 화면에 보일 한 줄 — 「사용자 지시:」 줄이 있으면 그 뒤, 없으면 머리말(작업 디렉터리·IMPORTANT) 아닌 첫 줄.
+// 작업을 파일로 넘기면 ps 명령줄엔 작업 원문이 없다 — codex 는 폴더 이름, edb-p 는 빈칸만 보였다(10-07)
+export function taskLine(text: string) {
+  const lines = text.split('\n').map(l => l.replace(/^[#>*\s-]+/, '').trim()).filter(Boolean)
+  const said = lines.find(l => /^사용자 (지시|원문|요청)[^:：]*[:：]/.test(l))
+  if (said) return said.replace(/^[^:：]+[:：]\s*/, '').replace(/^[「"']+|[」"']+$/g, '')
+  return lines.find(l => !/^(작업 디렉터리|작업 위치|cwd|IMPORTANT)\b/i.test(l)) ?? ''
+}
+
 // ps 출력(pid ppid etime command) + tmux 패널(pane_pid 세션) → 위임 에이전트 목록.
 // 잡는 것: edb-p·claude-as·delegate 아래의 `claude -p`, `codex exec`. 버리는 것: OMC HUD 요약(session-summary)이
 // 띄우는 `claude -p`, 상주 Codex(app-server·TUI), 다른 위임 안에서 다시 뜬 것(맨 위 하나만 센다).
 // 명령줄엔 작업 원문이 있어 화면에만 60자로 자르고 문맥엔 넣지 않는다.
 // me(이 mod 가 띄운 sh 의 부모 pid)를 주면 그 위 가장 가까운 claude 세션 프로세스 아래 것만 남긴다 — 다른 레인 것은 뺀다.
-export function parsePs(ps: string, panes: string, me?: number): Agent[] {
+// stdins: 위임 프로세스 pid → 그 stdin 파일 앞부분(scanAgents 가 lsof 로 읽는다)
+export function parsePs(ps: string, panes: string, me?: number, stdins: ReadonlyMap<number, string> = new Map()): Agent[] {
   const procs = new Map<number, { ppid: number; etime: string; cmd: string }>()
   for (const l of ps.split('\n')) {
     const m = l.match(/^\s*(\d+)\s+(\d+)\s+(\S+)\s+(.*)$/)
@@ -341,15 +351,16 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
     if (root && !chain.some(c => c.pid === root)) continue // 다른 세션이 띄운 것
     const lane = chain.map(c => lanes.get(c.pid)).find(Boolean) ?? ''
     const via = /(^|\/)delegate(\s|$)/m.test(up) ? 'delegate' : ''
+    const task = taskLine(chain.map(c => stdins.get(c.pid)).find(Boolean) ?? '')
     if (claude) {
       const edb = chain.find(c => /(^|\/)edb-p(\s|$)/.test(c.cmd))
       const as = up.match(/(?:^|\/)claude-as\s+(\S+)/m)
       // claude-as 는 exec 로 claude 가 되어 부모 목록에 안 남는다 — 계정을 모르면 claude 로 둔다
-      const desc = edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : (p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
+      const desc = (edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : '') || task || (edb ? '' : p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
       out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(edb?.cmd ?? p.cmd, 200)] })
     } else {
       const dir = p.cmd.match(/\s-C\s+(\S+)/)?.[1] ?? ''
-      out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(p.cmd, 200)] })
+      out.push({ who: 'codex', name: via || 'exec', desc: clean(task || (dir.split('/').pop() ?? ''), 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(p.cmd, 200)] })
     }
   }
   // 오래 도는 Bash 셸(백그라운드 `gh run watch` 등) — 세션이 바로 띄운 snapshot zsh 가 SHELL_MIN 넘게 살아 있으면 «셸»로 센다.
@@ -377,8 +388,10 @@ function secOf(etime: string) {
 }
 
 async function scanAgents($: EngineInterface, paneOpen?: boolean) {
-  const r = await $.process.run(['sh', '-c', 'echo $PPID; echo @@; ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null']).catch(() => undefined)
-  const [me = '', ps = '', panes = '', acct = ''] = (r?.stdout ?? '').split('@@\n')
+  const r = await $.process.run(['sh', '-c', 'echo $PPID; echo @@; ps -axo pid=,ppid=,etime=,command=; echo @@; tmux list-panes -a -F "#{pane_pid} #{session_name}" 2>/dev/null; echo @@; L=$([ -n "$TMUX_PANE" ] && tmux display -p -t "$TMUX_PANE" "#{session_name}" 2>/dev/null); cat "${CLAUDE_CONFIG_DIR:-$HOME/.claude}/usage/lanes/$L" 2>/dev/null; echo @@; for p in $(pgrep -f "/(delegate|edb-p)( |$)"); do f=$(lsof -a -p $p -d 0 -Fn 2>/dev/null | sed -n "s/^n//p" | tail -1); [ -f "$f" ] && printf "\\036%s\\n" $p && head -c 4000 "$f"; done']).catch(() => undefined)
+  const [me = '', ps = '', panes = '', acct = '', input = ''] = (r?.stdout ?? '').split('@@\n')
+  const stdins = new Map<number, string>()
+  for (const b of input.split('\x1e').slice(1)) stdins.set(Number(b.slice(0, b.indexOf('\n'))), b.slice(b.indexOf('\n') + 1))
   const t = await now($)
   // 이 세션의 서브에이전트 — 레인 계정은 HUD 가 남긴 기록(없으면 claude)
   const mine = (await $.agent.list().catch(() => [])).filter(a => ['running', 'pending', 'waiting'].includes(a.status))
@@ -387,7 +400,7 @@ async function scanAgents($: EngineInterface, paneOpen?: boolean) {
   const who = acct.trim().split(/\s+/)[0] || 'claude'
   const list: Agent[] = [
     ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
-    ...parsePs(ps, panes, Number(me) || undefined),
+    ...parsePs(ps, panes, Number(me) || undefined, stdins),
   ]
   // 서브에이전트 기록은 패널이 열려 있을 때만 읽는다 — 도구 호출마다 도는 곳이다
   if (paneOpen ?? (await $.ui.panes().catch(() => [])).some(x => x.id === AGENTS))

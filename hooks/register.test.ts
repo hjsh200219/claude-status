@@ -1,5 +1,5 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { actOf, editWarning, parsePs, subcommand } from './register'
+import { actOf, editWarning, parsePs, subcommand, taskLine } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const CFG = '/h/.claude'
@@ -470,4 +470,26 @@ test('30초 넘게 도는 Bash 셸(백그라운드 gh run watch)은 «셸»로 �
     ['codex', 'exec', '', '3분', 'DevOps1'],
     ['셸', 'Bash', 'gh run watch 37583790372 --exit-status --interval 60', '12분', 'DevOps1'],
   ])
+})
+
+test('작업을 파일(stdin)로 넘긴 delegate·edb-p 는 그 파일의 작업 한 줄을 보인다', () => {
+  const ps = [
+    '  100     1 05:00:00 /x/claude --resume abc',
+    '  400   100    03:00 python3 /h/.local/bin/delegate',
+    '  401   400    02:59 /x/codex exec -C /h/workspace/pc-web-ci-slim --skip-git-repo-check -s workspace-write -o /tmp/o.md -',
+    '  500   100    01:00 python3 /h/.local/bin/edb-p',
+    '  501   500    00:59 /x/claude-fixed/claude -p --output-format stream-json --verbose',
+    '  600   100    00:30 python3 /h/.local/bin/delegate',                           // 파일 없음 → 종전처럼 폴더 이름
+    '  601   600    00:29 /x/codex exec -C /h/workspace/adminsite -',
+  ].join('\n')
+  const stdins = new Map([
+    [400, '작업 디렉터리: /h/workspace/pc-web-ci-slim\n\n사용자 지시: 「pillcheck CI 를 줄이는 6개를 적용해줘.」\npush 허락 아님'],
+    [500, '/publish\n'],
+  ])
+  expect(parsePs(ps, '', 100, stdins).map(a => [a.name, a.desc])).toEqual([
+    ['delegate', 'pillcheck CI 를 줄이는 6개를 적용해줘.'],
+    ['edb-p', '/publish'],
+    ['delegate', 'adminsite'],
+  ])
+  expect(taskLine('IMPORTANT: Do NOT read\n# 필첵 PRD 검토\n')).toBe('필첵 PRD 검토')
 })
