@@ -394,12 +394,14 @@ function padCells(x: string, n: number) {
 // 요약 한 줄: « — » 앞 구절, 괄호 속 ID·경로는 뺀다
 const brief = (x: string) => (x.split(' — ')[0] ?? '').replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
 
-// 사람 메시지 → 입력한 프롬프트만: 훅·시스템이 붙인 태그 블록은 빼고, 슬래시 명령은 「/이름 인자」로
+// 사람 메시지 → 사람이 입력한 프롬프트만: 슬래시 명령은 「/이름 인자」로, 엔진·훅이 넣은 메시지(작업 알림·스킬 본문·중단 표시)는 뺀다
 export function promptOf(text: string) {
   const cmd = text.match(/<command-name>([^<]*)<\/command-name>/)
   if (cmd) return `${cmd[1]?.trim()} ${text.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim() ?? ''}`.trim()
-  const t = text.replace(/<(system-reminder|local-command-[a-z]+|command-[a-z]+)>[\s\S]*?<\/\1>/g, '').trim()
-  return /^(Base directory for this skill|\[Request interrupted)/.test(t) ? '' : t
+  const t = text.replace(/<(system-reminder|task-notification|local-command-[a-z]+|command-[a-z]+)\b[^>]*>[\s\S]*?<\/\1>/g, '').trim()
+  // 통째로 태그 블록 하나인 메시지도 엔진이 넣은 것이다(붙여넣기 블록은 사람 것이라 남긴다)
+  if (/^<(?!pasted_content)([a-z][\w-]*)\b[^>]*>[\s\S]*<\/\1>$/.test(t)) return ''
+  return /^(Base directory for this skill|\[Request interrupted|Caveat:)/.test(t) ? '' : t
 }
 
 async function readPrompts($: EngineInterface) {

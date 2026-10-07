@@ -391,6 +391,10 @@ test('요약 버튼을 누르면 이 세션 프롬프트 패널(태그·도구 �
     { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 't', text: 'ok' }] },
     { role: 'user', text: 'Base directory for this skill: /x', toolUses: [] },
     { role: 'user', text: '<command-name>/clear</command-name><command-args></command-args>', toolUses: [] },
+    { role: 'user', text: '<task-notification> <task-id>a1</task-id> <status>completed</status> </task-notification>', toolUses: [] },
+    { role: 'user', text: '<task-notification>\n<task-id>a2</task-id>\n</task-notification>\n<system-reminder>x</system-reminder>', toolUses: [] },
+    { role: 'user', text: '<future-tag>엔진이 넣음</future-tag>', toolUses: [] },
+    { role: 'user', text: '[Request interrupted by user]', toolUses: [] },
     { role: 'user', text: '두 번째 질문', toolUses: [] },
   ] }))
   await status($, on)
@@ -399,7 +403,7 @@ test('요약 버튼을 누르면 이 세션 프롬프트 패널(태그·도구 �
   expect(panes).toEqual([{ id: 'prompts' }])
   const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface: 'terminal', component: 'Pane', props: {}, requestId: 'prompts' })
   const texts = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
-  expect(texts.filter((t: string) => /질문|clear|무시|Base/.test(t))).toEqual(['두 번째 질문', '/clear', '첫 질문'])
+  expect(texts.filter((t: string) => /질문|clear|무시|Base|task|엔진|Request/.test(t))).toEqual(['두 번째 질문', '/clear', '첫 질문'])
   await ui.unmount()
   await ($ as any).ui.press({ plugin: 'meta-status', key: 'prompts', surface: 'terminal' })
   expect(panes).toEqual([])
