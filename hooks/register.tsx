@@ -571,8 +571,8 @@ export const register: Register = on => {
         <Box flexDirection="row" gap={1}>
           {a > 0 && <Text color="blue">●</Text>}
           {a > 0 && <Button key="agents" hover={{ scope: 'agents', color: 'blue' }} label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
-          {n > 0 && <Text color="error">●</Text>}
-          {n > 0 && <Button key="loops" hover={{ scope: 'loops', color: 'error' }} label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
+          {n > 0 && <Button key="loops" hover={{ scope: 'loops', color: 'error' }} label="열린 일" onPress={async () => { await togglePane($) }} />}
+          {n > 0 && <Text color="error" bold>{n}</Text>}
         </Box>
       </Box>
     )
