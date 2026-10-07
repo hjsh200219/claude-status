@@ -448,3 +448,26 @@ test('/codex 가 띄운 codex exec(프롬프트가 -C 앞) 도 이 세션 에이
   ].join('\n')
   expect(parsePs(ps, '', 100).map(a => [a.who, a.name, a.desc])).toEqual([['codex', 'exec', 'workspace']])
 })
+
+test('30초 넘게 도는 Bash 셸(백그라운드 gh run watch)은 «셸»로 잡고, 짧은 셸·위임을 품은 셸·다른 세션 셸은 뺀다', () => {
+  const Z = '/bin/zsh -c source /h/.claude/shell-snapshots/snapshot-zsh-1.sh 2>/dev/null || true && export X=1'
+  const ps = [
+    '  100     1 05:00:00 /x/claude --resume abc',
+    `  726   100    12:33 ${Z}`,
+    '  1490   726    12:24 gh run watch 37583790372 --exit-status --interval 60',
+    `  800   100    00:05 ${Z}`,                                                   // 짧은 셸 → 버림
+    '  801   800    00:05 ls',
+    `  900   100    03:21 ${Z}`,                                                   // codex 를 품은 셸 → codex 로만
+    `  901   900    03:21 ${Z}`,
+    '  902   901    03:21 /opt/homebrew/bin/gtimeout 3600 codex exec resume 01a',
+    '  903   902    03:21 codex exec resume 01a IMPORTANT',
+    '  700     1 05:00:00 /x/claude --resume def',
+    `  701   700    09:00 ${Z}`,                                                   // 다른 세션 → 버림
+    '  702   701    09:00 sleep 600',
+    '  950   100    00:00 sh -c echo $PPID',
+  ].join('\n')
+  expect(parsePs(ps, '100 DevOps1\n', 950).map(a => [a.who, a.name, a.desc, a.age, a.lane])).toEqual([
+    ['codex', 'exec', '', '3분', 'DevOps1'],
+    ['셸', 'Bash', 'gh run watch 37583790372 --exit-status --interval 60', '12분', 'DevOps1'],
+  ])
+})

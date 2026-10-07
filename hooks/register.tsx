@@ -352,7 +352,28 @@ export function parsePs(ps: string, panes: string, me?: number): Agent[] {
       out.push({ who: 'codex', name: via || 'exec', desc: clean(dir.split('/').pop() ?? '', 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(p.cmd, 200)] })
     }
   }
+  // 오래 도는 Bash 셸(백그라운드 `gh run watch` 등) — 세션이 바로 띄운 snapshot zsh 가 SHELL_MIN 넘게 살아 있으면 «셸»로 센다.
+  // 그 아래에 위 위임이 있으면 이미 센 것이라 뺀다. 작업 원문은 셸 아래 첫 실제 명령(zsh -c 원문은 export 줄로 시작해 못 쓴다).
+  const kids = new Map<number, number[]>()
+  for (const [pid, p] of procs) kids.set(p.ppid, [...(kids.get(p.ppid) ?? []), pid])
+  const isShell = (cmd: string) => /^\S*zsh -c source \S*shell-snapshots\//.test(cmd)
+  for (const [pid, p] of procs) {
+    if (!isShell(p.cmd) || secOf(p.etime) < SHELL_MIN) continue
+    const parent = procs.get(p.ppid)
+    if (root ? p.ppid !== root : !(parent && base(parent.cmd) === 'claude' && !isClaudeP(parent.cmd))) continue
+    const below: string[] = []
+    for (let q = [...(kids.get(pid) ?? [])]; q.length;) { const c = q.shift()!; below.push(procs.get(c)!.cmd); q.push(...(kids.get(c) ?? [])) }
+    if (below.some(c => isClaudeP(c) || isCodexExec(c))) continue
+    const job = below.find(c => !isShell(c)) ?? ''
+    out.push({ who: '셸', name: 'Bash', desc: clean(job, 60), age: ageOf(p.etime), lane: lanes.get(p.ppid) ?? '', detail: [`pid ${pid}`, clean(job, 200)] })
+  }
   return out
+}
+
+const SHELL_MIN = 30 // 초 — 짧은 Bash 호출·mod 자신의 스캔은 빼려고
+function secOf(etime: string) {
+  const [d, rest = ''] = etime.includes('-') ? etime.split('-') : ['0', etime]
+  return rest.split(':').map(Number).reduce((s, x) => s * 60 + x, 0) + Number(d) * 86400
 }
 
 async function scanAgents($: EngineInterface, paneOpen?: boolean) {

@@ -60,6 +60,7 @@ Claude Code 에서:
 
 - 이 세션의 서브에이전트(Agent 도구) — 계정은 HUD 가 남긴 레인 계정, 없으면 `claude`
 - 이 세션이 띄운 위임: `edb-p`(edb) · `delegate` · `codex exec` · 그 밖의 `claude -p`
+- 이 세션이 띄운 Bash 셸 중 30초 넘게 도는 것(백그라운드 `gh run watch` 등) — 「셸」 묶음, 셸 아래 첫 실제 명령을 보임
 - 빼는 것: 다른 세션(레인)이 띄운 위임, oh-my-claudecode HUD 요약이 띄우는 `claude -p`, ChatGPT 앱 등 상주 Codex, 위임 안에서 다시 뜬 것
 - 서브에이전트는 줄 끝에 `지금 Read register.tsx · 14번째` 처럼 마지막 도구 호출과 몇 번째인지 붙습니다(도구를 부르기 직전에 바뀜). `edb-p`·`codex exec` 같은 바깥 프로세스는 작업 원문만 보입니다.
 - 도구가 도는 동안 15초마다, 도구 호출·턴이 끝날 때 다시 읽습니다 — 포그라운드 Bash 로 몇 분 도는 `/codex`·`/edb-p` 도 도는 동안 보입니다. 명령줄의 작업 원문은 화면에만 60자로 보이고 모델 문맥엔 넣지 않습니다.
