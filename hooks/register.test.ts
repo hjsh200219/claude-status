@@ -376,3 +376,31 @@ test('Windows(sh·ps·tmux 없음, HOME 대신 USERPROFILE): 상태 줄·/worker
   expect(saved.length).toBe(1)
   expect(JSON.parse(g.w.files.get(saved[0])!).lane).toBe('')
 })
+
+test('요약 버튼을 누르면 이 세션 프롬프트 패널(태그·도구 결과·스킬 본문 제외, 최신 위)', async ($, on) => {
+  const g = world({ legacy: true })
+  g.install(on)
+  g.w.files.set('/h/workspace/.omc/state/session-summary-me-session.json', JSON.stringify({ summary: 'status 입력창 위로' }))
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', () => { panes = []; return { value: undefined } })
+  on('session.messages', () => ({ value: [
+    { role: 'user', text: '<system-reminder>무시</system-reminder>첫 질문', toolUses: [] },
+    { role: 'assistant', text: '네', toolUses: [] },
+    { role: 'user', text: '', toolUses: [], toolResults: [{ tool_use_id: 't', text: 'ok' }] },
+    { role: 'user', text: 'Base directory for this skill: /x', toolUses: [] },
+    { role: 'user', text: '<command-name>/clear</command-name><command-args></command-args>', toolUses: [] },
+    { role: 'user', text: '두 번째 질문', toolUses: [] },
+  ] }))
+  await status($, on)
+  await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
+  await ($ as any).ui.press({ plugin: 'meta-status', key: 'prompts', surface: 'terminal' })
+  expect(panes).toEqual([{ id: 'prompts' }])
+  const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface: 'terminal', component: 'Pane', props: {}, requestId: 'prompts' })
+  const texts = (await ui.findAll({ type: 'Text' })).map((t: any) => t.text)
+  expect(texts.filter((t: string) => /질문|clear|무시|Base/.test(t))).toEqual(['두 번째 질문', '/clear', '첫 질문'])
+  await ui.unmount()
+  await ($ as any).ui.press({ plugin: 'meta-status', key: 'prompts', surface: 'terminal' })
+  expect(panes).toEqual([])
+})

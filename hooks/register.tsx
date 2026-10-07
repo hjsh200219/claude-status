@@ -46,6 +46,9 @@ const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
 const AGENTS = 'agents'
 type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[] }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
+// 이 세션에서 사람이 입력한 프롬프트(요약 버튼을 누르면 옆 패널로)
+const PROMPTS = 'prompts'
+const prompts = atom({ plugin: 'meta-status', key: 'prompts' } as const, [] as string[])
 const firstSeen = new Map<string, number>() // 서브에이전트 id → 처음 본 시각(초) — 경과 표시용
 // 입력창 위 줄 끄기(/meta-status off) — 레인(세션)마다 따로. 한 레인에서 끈 것이 다른 레인 줄까지 지우지 않게
 const hidden = atom({ plugin: 'meta-status', key: 'hidden' } as const, false)
@@ -391,7 +394,32 @@ function padCells(x: string, n: number) {
 // 요약 한 줄: « — » 앞 구절, 괄호 속 ID·경로는 뺀다
 const brief = (x: string) => (x.split(' — ')[0] ?? '').replace(/\s*\([^)]*\)/g, '').replace(/\s+/g, ' ').trim()
 
-// 열린 일 패널 열기·닫기(명령과 버튼이 같이 쓴다)
+// 사람 메시지 → 입력한 프롬프트만: 훅·시스템이 붙인 태그 블록은 빼고, 슬래시 명령은 「/이름 인자」로
+export function promptOf(text: string) {
+  const cmd = text.match(/<command-name>([^<]*)<\/command-name>/)
+  if (cmd) return `${cmd[1]?.trim()} ${text.match(/<command-args>([^<]*)<\/command-args>/)?.[1]?.trim() ?? ''}`.trim()
+  const t = text.replace(/<(system-reminder|local-command-[a-z]+|command-[a-z]+)>[\s\S]*?<\/\1>/g, '').trim()
+  return /^(Base directory for this skill|\[Request interrupted)/.test(t) ? '' : t
+}
+
+async function readPrompts($: EngineInterface) {
+  const ms = await $.session.messages().catch(() => undefined)
+  const list = Array.isArray(ms) ? ms.filter(m => m.role === 'user' && !m.toolResults?.length).map(m => promptOf(m.text)).filter(Boolean) : []
+  await update($, prompts, () => list)
+  return list
+}
+
+// 프롬프트 패널 열기·닫기(명령과 요약 버튼이 같이 쓴다)
+async function togglePrompts($: EngineInterface) {
+  if ((await $.ui.panes()).some(x => x.id === PROMPTS)) {
+    await $.ui.close({ id: PROMPTS })
+    return '프롬프트 패널을 닫았습니다'
+  }
+  const n = (await readPrompts($)).length
+  await $.ui.open({ id: PROMPTS, title: `프롬프트 ${n}`, closeOnEscape: true, rows: Math.min(30, n * 2 + 2) })
+  return `프롬프트 ${n}개 — /prompts 다시 입력하면 닫힘`
+}
+
 // 에이전트 패널 열기·닫기(명령과 버튼이 같이 쓴다)
 async function toggleAgents($: EngineInterface) {
   if ((await $.ui.panes()).some(x => x.id === AGENTS)) {
@@ -454,6 +482,7 @@ export const register: Register = on => {
     const r = await next(e)
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
     await $.command.register({ name: 'meta-status', description: '입력창 위 meta-status 줄 켜기·끄기(이 레인만)', argumentHint: 'on | off' })
+    await $.command.register({ name: 'prompts', description: '이 세션에서 입력한 프롬프트 패널 열기·닫기(입력창 위 요약을 눌러도 됨)' })
     await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기(마지막 말·최근 도구까지)' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
@@ -475,8 +504,11 @@ export const register: Register = on => {
   on('turn.complete', async ($, e, next) => {
     const r = await next(e)
     await refresh($, await $.session.cwd())
+    if ((await $.ui.panes().catch(() => [])).some(x => x.id === PROMPTS)) await readPrompts($)
     return r
   })
+
+  on('command.run', { command: 'prompts' }, async $ => ({ text: await togglePrompts($) }))
 
   on('command.run', { command: 'where' }, async $ => ({ text: await refresh($, await $.session.cwd()) }))
 
@@ -531,12 +563,31 @@ export const register: Register = on => {
       <Box flexDirection="row" justifyContent="space-between" width="100%">
         <Box flexDirection="row" gap={1} flexGrow={1}>
           {where && <Text dimColor>{where}</Text>}
-          {sum && <Text dimColor>· {sum}</Text>}
+          {sum && <Text dimColor>·</Text>}
+          {sum && <Button key="prompts" label={sum} onPress={async () => { await togglePrompts($) }} />}
         </Box>
         <Box flexDirection="row" gap={1}>
           {a > 0 && <Button key="agents" label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
           {n > 0 && <Button key="loops" label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
         </Box>
+      </Box>
+    )
+  })
+
+  on('ui.render', { component: 'Pane', requestId: PROMPTS }, async ($, e) => {
+    const { Box, Text } = $.ui.resolve(e)
+    const list = await read($, prompts)
+    // 최신이 위 — 패널 높이를 넘는 옛 프롬프트는 아래로 잘린다
+    return (
+      <Box flexDirection="column">
+        {list.length === 0 && <Text dimColor>입력한 프롬프트 없음</Text>}
+        {list.map((p, i) => ({ p, i })).reverse().map(({ p, i }) => (
+          <Box flexDirection="row" gap={1}>
+            <Text dimColor>{String(i + 1).padStart(2)}</Text>
+            <Text wrap="wrap">{p.replace(/\s+/g, ' ').slice(0, 400)}</Text>
+          </Box>
+        ))}
+        <Text dimColor>최신이 위 · 턴이 끝날 때마다 갱신 · 닫기: 요약 다시 · /prompts · ✕</Text>
       </Box>
     )
   })
