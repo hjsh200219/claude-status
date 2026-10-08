@@ -601,7 +601,7 @@ export const register: Register = on => {
     if ((!where && !n && !sum && !a) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
-      <Box flexDirection="row" justifyContent="space-between" width="100%" paddingLeft={2}>
+      <Box flexDirection="row" justifyContent="space-between" width="100%" paddingLeft={2} paddingTop={1}>
         <Box flexDirection="row" gap={1} flexGrow={1}>
           {where && <Text color="#ff8700">{where}</Text>}
           {sum && <Text dimColor>·</Text>}
