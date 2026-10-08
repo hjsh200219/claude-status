@@ -583,10 +583,9 @@ export const register: Register = on => {
     return { text: await togglePane($) }
   })
 
-  // 입력창 아래 안내 줄(? for shortcuts·esc to interrupt) 밑 한 줄: 왼쪽 repo · 브랜치 ↑✎ · 요약, 오른쪽 끝 「열린 일 N」 버튼(누르면 패널 열기·닫기)
+  // 입력창 위 한 줄: 왼쪽 repo · 브랜치 ↑✎ · 요약, 오른쪽 끝 「열린 일 N」 버튼(누르면 패널 열기·닫기)
   // 상태줄($.ui.status)은 앞에 「⚠ 플러그인 이름:」이 붙고 누를 수 없어 쓰지 않는다
-  // 입력창 위(AbovePrompt)에 두면 엔진이 첫 줄 오른쪽에 접기 [-] 를 붙이고 숨길 방법이 없어 아래로 옮겼다(10-08)
-  on('ui.render', { component: 'PromptHint' }, async ($, e, next) => {
+  on('ui.render', { component: 'AbovePrompt' }, async ($, e, next) => {
     const where = await read($, head)
     const sum = await read($, summary)
     const n = (await read($, rows)).length
@@ -599,13 +598,10 @@ export const register: Register = on => {
         void $.session.cwd().then(cwd => refresh($, cwd)).catch(() => undefined)
       }
     }
-    if (!where && !n && !sum && !a) return next(e)
-    const hint = await next(e)
+    if ((!where && !n && !sum && !a) || e.props.hasSurvey) return next(e)
     const { Box, Text, Button } = $.ui.resolve(e)
     return (
-      <Box flexDirection="column" width="100%">
-      {hint}
-      <Box flexDirection="row" justifyContent="space-between" width="100%" paddingLeft={2}>
+      <Box flexDirection="row" justifyContent="space-between" width="100%" paddingLeft={2} paddingTop={1}>
         <Box flexDirection="row" gap={1} flexGrow={1}>
           {where && <Text color="#ff8700">{where}</Text>}
           {sum && <Text dimColor>·</Text>}
@@ -615,7 +611,6 @@ export const register: Register = on => {
           {a > 0 && <Button key="agents" hover={{ scope: 'agents', color: 'blue' }} label={`에이전트 ${a}`} onPress={async () => { await toggleAgents($) }} />}
           {n > 0 && <Button key="loops" hover={{ scope: 'loops', color: 'error' }} label={`열린 일 ${n}`} onPress={async () => { await togglePane($) }} />}
         </Box>
-      </Box>
       </Box>
     )
   })

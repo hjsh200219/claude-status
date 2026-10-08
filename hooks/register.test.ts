@@ -187,11 +187,10 @@ test('입력창 위 「열린 일 N」 버튼을 누르면 패널이 열리고 �
   on('ui.panes', () => ({ value: panes }))
   on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
   on('ui.close', () => { panes = []; return { value: undefined } })
-  on('ui.render', ($: any, e: any) => { const { Text } = $.ui.resolve(e); return h(Text, {}, '엔진 기본') })
   await status($, on)
   for (const surface of ['terminal', 'desktop'] as const) {
     panes = []
-    await ($ as any).ui.mount({ plugin: 'meta-status', surface, component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } })
+    await ($ as any).ui.mount({ plugin: 'meta-status', surface, component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } })
     await ($ as any).ui.press({ plugin: 'meta-status', key: 'loops', surface })
     expect(panes).toEqual([{ id: 'open-loops' }])
     await ($ as any).ui.press({ plugin: 'meta-status', key: 'loops', surface })
@@ -327,7 +326,7 @@ test('에이전트 감지: 셸 별칭이 붙인 codex --yolo exec 도 잡는다'
   ])
 })
 
-const BAND = { component: 'PromptHint', props: { isDraft: false, isWorking: false, hint: '? for shortcuts' } } as const
+const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } } as const
 
 test('/meta-status off 면 입력창 위 줄을 그리지 않고 on 이면 다시 그린다', async ($, on) => {
   const g = world()
@@ -341,10 +340,6 @@ test('/meta-status off 면 입력창 위 줄을 그리지 않고 on 이면 다�
     return hit !== undefined
   }
   expect(await shows()).toBe(true)
-  // 엔진 안내 줄(? for shortcuts)은 지우지 않고 그 밑에 붙인다
-  const ui = await ($ as any).ui.mount({ plugin: 'meta-status', surface: 'terminal', ...BAND })
-  expect(await ui.find({ type: 'Text', text: /엔진 기본/ })).toBeDefined()
-  await ui.unmount()
   expect(((await $.command.run({ command: 'meta-status', args: 'off' } as any)) as any).text).toContain('껐습니다')
   expect(await shows()).toBe(false)
   expect(((await $.command.run({ command: 'meta-status', args: '' } as any)) as any).text).toContain('꺼짐')
@@ -390,7 +385,6 @@ test('요약 버튼을 누르면 이 세션 프롬프트 패널(태그·도구 �
   on('ui.panes', () => ({ value: panes }))
   on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
   on('ui.close', () => { panes = []; return { value: undefined } })
-  on('ui.render', ($: any, e: any) => { const { Text } = $.ui.resolve(e); return h(Text, {}, '엔진 기본') })
   on('session.messages', () => ({ value: [
     { role: 'user', text: '<system-reminder>무시</system-reminder>첫 질문', toolUses: [] },
     { role: 'assistant', text: '네', toolUses: [] },
