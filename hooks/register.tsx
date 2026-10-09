@@ -293,7 +293,8 @@ function ageOf(etime: string) {
   return hours ? `${hours}시간 ${m}분` : m ? `${m}분` : '방금'
 }
 
-const clean = (x: string, n: number) => x.replace(/[\r\n\t]+/g, ' ').replace(/[`<>"']/g, '').trim().slice(0, n)
+// 지시·오류 원문의 터미널 제어 문자(ESC 시퀀스 포함)도 공백으로 — 패널을 어지럽히지 않게
+const clean = (x: string, n: number) => x.replace(/[\x00-\x1f\x7f-\x9f]+/g, ' ').replace(/[`<>"']/g, '').trim().slice(0, n)
 
 // codex 의 첫 하위 명령 — 앞에 붙은 옵션(`--yolo`, `-c k=v`, `-m 모델` …)은 건너뛴다(셸 별칭이 `codex --yolo exec` 로 띄운다)
 const CODEX_VALUE_FLAGS = new Set(['-c', '--config', '-m', '--model', '-p', '--profile', '-C', '--cd', '-s', '--sandbox', '-a', '--ask-for-approval', '-i', '--image', '--remote', '--enable', '--disable'])
@@ -680,12 +681,11 @@ export const register: Register = on => {
   }).catch(($, e, next) => next(e))
 
   // 서브에이전트가 뜰 때 모델·지시 원문을 적어 둔다 — $.agent.list() 엔 몇 낱말 설명만 있다
-  // next 를 다시 부르면 두 번 뜨므로 .catch 로 감싸지 않는다(Map 에 넣기만 해 던질 곳이 없다)
   on('agent.spawn', async ($, e, next) => {
     const r = await next(e)
     if ('agentId' in r && r.agentId) spawned.set(r.agentId, { model: r.model, prompt: e.prompt, bg: e.background })
     return r
-  })
+  }).catch(($, e, next) => next(e)) // 이미 부른 next 는 결과만 다시 돌려준다 — 두 번 뜨지 않는다
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)
