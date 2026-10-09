@@ -44,7 +44,8 @@ const head = atom({ plugin: 'meta-status', key: 'head' } as const, '')
 const summary = atom({ plugin: 'meta-status', key: 'summary' } as const, '')
 // 지금 도는 에이전트(이 세션의 서브에이전트 + 이 세션이 띄운 edb-p·claude-as·codex exec)
 const AGENTS = 'agents'
-type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[] }
+// pid·kind·sec: 바깥 프로세스(대화 기록을 찾을 때) · depth: 서브에이전트 중첩 깊이(들여쓰기)
+type Agent = { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[]; pid?: number; kind?: 'claude' | 'codex'; sec?: number; sid?: string; depth?: number }
 const agents = atom({ plugin: 'meta-status', key: 'agents' } as const, [] as Agent[])
 // 이 세션에서 사람이 입력한 프롬프트(요약 버튼을 누르면 옆 패널로)
 const PROMPTS = 'prompts'
@@ -64,23 +65,77 @@ let running = 0
 let ticker: { cancel: () => void } | undefined
 const stopTicker = () => { ticker?.cancel(); ticker = undefined; running = 0 }
 
-// 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패와 그 이유 · … 도는 중) · 총 횟수
+// 도구 호출 하나(서브에이전트 기록·바깥 프로세스 대화 기록 공용)
+type Use = { tool: string; input: unknown; text?: string; isError?: boolean; done: boolean; ms?: number }
+
+// 결과 한 줄: 실패는 이유 60자, 성공은 첫 줄 40자(+남은 줄 수) — Read 는 파일 첫 줄이 뜻이 없어 줄 수만
+export function resultOf(u: Use) {
+  const lines = (u.text ?? '').split('\n').map(l => l.trim()).filter(l => l && !/^(Script completed|Wall time|Output:$)/.test(l))
+  if (!lines.length) return ''
+  if (u.isError) return clean(lines.join(' '), 60)
+  if (u.tool === 'Read') return `${lines.length}줄`
+  return `${clean(lines[0] ?? '', 40)}${lines.length > 1 ? ` (+${lines.length - 1}줄)` : ''}`
+}
+
+// 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중, 걸린 시간 → 결과) · 횟수
+function useLines(said: string, uses: Use[], count: string): string[] {
+  const secs = (ms: number) => (ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}초`)
+  return [
+    ...(said ? [`말 ${clean(said, 300)}`] : []),
+    ...uses.slice(-5).map(u => {
+      const r = resultOf(u)
+      return `${u.isError ? '✗' : u.done ? '✓' : '…'} ${actOf(u.tool, u.input)}${u.ms ? ` ${secs(u.ms)}` : ''}${r ? ` → ${r}` : ''}`
+    }),
+    count,
+  ]
+}
+
+// 서브에이전트 대화 기록에서
 async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
   const ms = await $.session.messages({ agentId: id }).catch(() => undefined)
   if (!Array.isArray(ms)) return []
   const said = [...ms].reverse().find(m => m.role === 'assistant' && m.text.trim())?.text ?? ''
-  const uses = ms.flatMap(m => m.toolUses)
-  const mark = (u: (typeof uses)[number]) => (u.isError ? '✗' : 'text' in u || 'result' in u ? '✓' : '…')
-  const secs = (ms: number) => (ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}초`)
-  return [
-    ...(said ? [`말 ${clean(said, 300)}`] : []),
-    ...uses.slice(-5).map(u => `${mark(u)} ${actOf(u.tool, u.input)}${u.durationMs ? ` ${secs(u.durationMs)}` : ''}${u.isError && u.text ? ` → ${clean(u.text, 60)}` : ''}`),
-    `도구 ${uses.length}번 · 메시지 ${ms.length}개`,
-  ]
+  const uses = ms.flatMap(m => m.toolUses).map(u => ({ tool: u.tool, input: u.input, text: u.text, isError: u.isError, done: 'text' in u || 'result' in u, ms: u.durationMs }))
+  return useLines(said, uses, `도구 ${uses.length}번 · 메시지 ${ms.length}개`)
+}
+
+// 바깥 프로세스(claude -p · codex exec)의 대화 기록 끝부분(jsonl)에서 — Claude 기록과 Codex rollout 둘 다 읽는다.
+// 끝부분만 읽으므로 첫 줄은 잘려 있을 수 있고(건너뜀) 횟수도 그 안에서만 센다.
+export function transcriptDetail(chunk: string): string[] {
+  let said = ''
+  const uses: Use[] = []
+  const byId = new Map<string, Use>()
+  const textOf = (c: unknown): string => typeof c === 'string' ? c : Array.isArray(c) ? c.map(x => (x as { text?: string })?.text ?? '').join('\n') : ''
+  const add = (id: string, u: Use) => { uses.push(u); byId.set(id, u) }
+  const done = (id: string, text: string, isError?: boolean) => { const u = byId.get(id); if (u) Object.assign(u, { text, done: true, isError: isError || undefined }) }
+  for (const line of chunk.split('\n')) {
+    let e: any
+    try { e = JSON.parse(line) } catch { continue }
+    const p = e?.payload
+    if (e?.type === 'assistant' || e?.type === 'user') {
+      for (const b of Array.isArray(e.message?.content) ? e.message.content : []) {
+        if (b?.type === 'text' && e.type === 'assistant' && String(b.text).trim()) said = b.text
+        else if (b?.type === 'tool_use') add(b.id, { tool: b.name, input: b.input, done: false })
+        else if (b?.type === 'tool_result') done(b.tool_use_id, textOf(b.content), b.is_error)
+      }
+    } else if (e?.type === 'response_item' && p) {
+      if (p.type === 'message' && p.role === 'assistant' && textOf(p.content).trim()) said = textOf(p.content)
+      else if (p.type === 'function_call') {
+        let input: unknown = {}
+        try { input = JSON.parse(p.arguments) } catch {}
+        add(p.call_id, { tool: p.name, input, done: false })
+      } else if (p.type === 'custom_tool_call') {
+        // Codex 코드 모드: `tools.exec_command({cmd:"…"})` → exec_command …
+        const m = String(p.input).match(/tools\.(\w+)\(\{\s*\w+:\s*"((?:[^"\\]|\\.)*)"/)
+        add(p.call_id, m ? { tool: m[1] ?? p.name, input: { command: (m[2] ?? '').replace(/\\(.)/g, '$1') }, done: false } : { tool: p.name, input: { command: String(p.input) }, done: false })
+      } else if (/_output$/.test(p.type)) done(p.call_id, textOf(p.output))
+    }
+  }
+  return said || uses.length ? useLines(said, uses, `도구 ${uses.length}번(최근 기록)`) : []
 }
 
 // 도구 호출 한 줄: 「Read register.tsx」「Bash git status」 — 입력에서 처음 보이는 대표 문자열
-const ACT_KEYS = ['description', 'file_path', 'notebook_path', 'path', 'pattern', 'query', 'url', 'command', 'prompt']
+const ACT_KEYS = ['description', 'file_path', 'notebook_path', 'path', 'pattern', 'query', 'url', 'command', 'cmd', 'prompt']
 export function actOf(tool: string, input: unknown) {
   const i = (input ?? {}) as Record<string, unknown>
   const k = ACT_KEYS.find(k => typeof i[k] === 'string' && i[k])
@@ -342,6 +397,24 @@ export function parsePs(ps: string, panes: string, me?: number, stdins: Readonly
     const c = procs.get(q)!.cmd
     if (base(c) === 'claude' && !isClaudeP(c)) { root = q; break }
   }
+  const kids = new Map<number, number[]>()
+  for (const [pid, p] of procs) kids.set(p.ppid, [...(kids.get(p.ppid) ?? []), pid])
+  const isShell = (cmd: string) => /^\S*zsh -c source \S*shell-snapshots\//.test(cmd)
+  const below = (pid: number) => {
+    const all: number[] = []
+    for (const q = [...(kids.get(pid) ?? [])]; q.length;) { const c = q.shift()!; all.push(c); q.push(...(kids.get(c) ?? [])) }
+    return all
+  }
+  // 지금 도는 명령: 위임이 뜬 지 10초 넘어 띄운 자식 중 가장 새것
+  // shortcut: 시작 직후 뜨는 MCP 서버를 나이로만 거른다 — 오래 사는 자식을 늦게 띄우면 그게 보인다
+  const nowOf = (pid: number, etime: string) => {
+    const kid = below(pid).map(c => procs.get(c)!).filter(c => !isShell(c.cmd) && secOf(c.etime) <= secOf(etime) - 10)
+      .sort((a, b) => secOf(a.etime) - secOf(b.etime))[0]
+    return kid ? [`지금 ${clean(kid.cmd, 100)} · ${ageOf(kid.etime)}`] : []
+  }
+  // claude 는 --model 만, codex 는 -m·-c model= 도 — 명령줄의 작업 원문 속 「-m fix」를 모델로 읽지 않게
+  const modelOf = (cmd: string) => cmd.match(/\s--model[ =](\S+)/)?.[1] ?? (isCodexExec(cmd) ? cmd.match(/\s(?:-m\s+|-c\s+model=)"?([\w.-]+)/)?.[1] : undefined)
+  const head = (pid: number, cmd: string) => { const m = modelOf(cmd); return `pid ${pid}${m ? ` · 모델 ${m}` : ''}` }
   const out: Agent[] = []
   for (const [pid, p] of procs) {
     const claude = isClaudeP(p.cmd)
@@ -360,25 +433,26 @@ export function parsePs(ps: string, panes: string, me?: number, stdins: Readonly
       const as = up.match(/(?:^|\/)claude-as\s+(\S+)/m)
       // claude-as 는 exec 로 claude 가 되어 부모 목록에 안 남는다 — 계정을 모르면 claude 로 둔다
       const desc = (edb ? edb.cmd.replace(/^.*?edb-p\s*/, '') : '') || task || (edb ? '' : p.cmd.match(/\s-p\s+(?!-)(.+)$/)?.[1] ?? '')
-      out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(edb?.cmd ?? p.cmd, 200)] })
+      const full = desc.length > 60 ? [`지시 ${clean(desc, 300)}`] : []
+      const sid = p.cmd.match(/\s(?:--resume|-r|--session-id)[ =]([0-9a-f-]{36})/)?.[1]
+      out.push({ who: edb ? 'edb' : as?.[1] ?? 'claude', name: via || (edb ? 'edb-p' : 'claude -p'), desc: clean(desc, 60), age: ageOf(p.etime), lane, pid, kind: 'claude', sec: secOf(p.etime), sid,
+        detail: [head(pid, p.cmd), ...full, ...nowOf(pid, p.etime), clean(edb?.cmd ?? p.cmd, 200)] })
     } else {
       const dir = p.cmd.match(/\s-C\s+(\S+)/)?.[1] ?? ''
-      out.push({ who: 'codex', name: via || 'exec', desc: clean(task || (dir.split('/').pop() ?? ''), 60), age: ageOf(p.etime), lane, detail: [`pid ${pid}`, clean(p.cmd, 200)] })
+      const full = task.length > 60 ? [`지시 ${clean(task, 300)}`] : []
+      out.push({ who: 'codex', name: via || 'exec', desc: clean(task || (dir.split('/').pop() ?? ''), 60), age: ageOf(p.etime), lane, pid, kind: 'codex', sec: secOf(p.etime),
+        detail: [`${head(pid, p.cmd)}${dir ? ` · 위치 ${dir}` : ''}`, ...full, ...nowOf(pid, p.etime), clean(p.cmd, 200)] })
     }
   }
   // 오래 도는 Bash 셸(백그라운드 `gh run watch` 등) — 세션이 바로 띄운 snapshot zsh 가 SHELL_MIN 넘게 살아 있으면 «셸»로 센다.
   // 그 아래에 위 위임이 있으면 이미 센 것이라 뺀다. 작업 원문은 셸 아래 첫 실제 명령(zsh -c 원문은 export 줄로 시작해 못 쓴다).
-  const kids = new Map<number, number[]>()
-  for (const [pid, p] of procs) kids.set(p.ppid, [...(kids.get(p.ppid) ?? []), pid])
-  const isShell = (cmd: string) => /^\S*zsh -c source \S*shell-snapshots\//.test(cmd)
   for (const [pid, p] of procs) {
     if (!isShell(p.cmd) || secOf(p.etime) < SHELL_MIN) continue
     const parent = procs.get(p.ppid)
     if (root ? p.ppid !== root : !(parent && base(parent.cmd) === 'claude' && !isClaudeP(parent.cmd))) continue
-    const below: string[] = []
-    for (let q = [...(kids.get(pid) ?? [])]; q.length;) { const c = q.shift()!; below.push(procs.get(c)!.cmd); q.push(...(kids.get(c) ?? [])) }
-    if (below.some(c => isClaudeP(c) || isCodexExec(c))) continue
-    const job = below.find(c => !isShell(c)) ?? ''
+    const cmds = below(pid).map(c => procs.get(c)!.cmd)
+    if (cmds.some(c => isClaudeP(c) || isCodexExec(c))) continue
+    const job = cmds.find(c => !isShell(c)) ?? ''
     out.push({ who: '셸', name: 'Bash', desc: clean(job, 60), age: ageOf(p.etime), lane: lanes.get(p.ppid) ?? '', detail: [`pid ${pid}`, clean(job, 200)] })
   }
   return out
@@ -388,6 +462,34 @@ const SHELL_MIN = 30 // 초 — 짧은 Bash 호출·mod 자신의 스캔은 빼�
 function secOf(etime: string) {
   const [d, rest = ''] = etime.includes('-') ? etime.split('-') : ['0', etime]
   return rest.split(':').map(Number).reduce((s, x) => s * 60 + x, 0) + Number(d) * 86400
+}
+
+// 서브에이전트를 부모 아래로: 부모가 목록에 없으면(끝났으면) 맨 위로 올린다
+function tree<T extends { id: string; parentId?: string }>(all: T[]): [T, number][] {
+  const top = (a: T) => !a.parentId || !all.some(x => x.id === a.parentId)
+  const walk = (p: T | undefined, d: number, seen: Set<string>): [T, number][] =>
+    all.filter(a => (p ? a.parentId === p.id : top(a)) && !seen.has(a.id))
+      .flatMap(a => (seen.add(a.id), [[a, d] as [T, number], ...walk(a, d + 1, seen)]))
+  const seen = new Set<string>()
+  const out = walk(undefined, 0, seen)
+  return [...out, ...all.filter(a => !seen.has(a.id)).map(a => [a, 0] as [T, number])] // 부모가 서로를 가리키는 고리도 빠뜨리지 않게
+}
+
+// 바깥 프로세스의 대화 기록 끝부분(pid → jsonl 30KB) — macOS 의 lsof·stat 으로 찾는다(없으면 빈 값)
+// codex: 열어 둔 rollout-*.jsonl · claude -p: 같은 설정 폴더의 projects/<cwd 이름>/ 에서 명령줄의 세션 id(--resume 등) 기록,
+// 없으면 프로세스가 뜬 뒤 생긴 가장 이른 기록
+// shortcut: 세션 id 없는 claude -p 둘이 같은 폴더에서 몇 초 차이로 뜨면 기록이 바뀔 수 있다 — 위임 래퍼가 --session-id 를 넘기면 풀린다
+async function outerTranscripts($: EngineInterface, list: Agent[], t: number) {
+  const out = new Map<number, string>()
+  if (!list.length) return out
+  const args = list.flatMap(a => [String(a.pid), a.kind!, String(Math.floor(t - (a.sec ?? 0)) - 5), a.sid ?? '-'])
+  const r = await $.process.run(['sh', '-c', `while [ $# -ge 4 ]; do p=$1; k=$2; s=$3; i=$4; shift 4; f=
+if [ "$k" = codex ]; then f=$(lsof -a -p "$p" -Fn 2>/dev/null | sed -n 's/^n//p' | grep '/rollout-.*[.]jsonl$' | tail -1)
+else c=$(lsof -a -p "$p" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | tail -1); d="\${CLAUDE_CONFIG_DIR:-$HOME/.claude}/projects/$(printf %s "$c" | sed 's/[^A-Za-z0-9]/-/g')"; b=
+  [ -f "$d/$i.jsonl" ] && f=$d/$i.jsonl || for x in $(ls -t "$d"/*.jsonl 2>/dev/null | head -8); do y=$(stat -f %B "$x" 2>/dev/null) || continue; [ "$y" -ge "$s" ] && { [ -z "$b" ] || [ "$y" -lt "$b" ]; } && b=$y && f=$x; done; fi
+[ -n "$f" ] && printf '\\036%s\\n' "$p" && tail -c 30000 "$f"; done`, 'sh', ...args], { timeoutMs: 4000 }).catch(() => undefined)
+  for (const b of (r?.stdout ?? '').split('\x1e').slice(1)) out.set(Number(b.slice(0, b.indexOf('\n'))), b.slice(b.indexOf('\n') + 1))
+  return out
 }
 
 async function scanAgents($: EngineInterface, paneOpen?: boolean) {
@@ -402,16 +504,23 @@ async function scanAgents($: EngineInterface, paneOpen?: boolean) {
   for (const m of [doing, spawned]) for (const id of m.keys()) if (!mine.some(a => a.id === id)) m.delete(id)
   const who = acct.trim().split(/\s+/)[0] || 'claude'
   const list: Agent[] = [
-    ...mine.map(a => ({ who, name: a.name ? `${a.name} · ${a.type}` : a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
+    ...tree(mine).map(([a, depth]) => ({ who, name: a.name ? `${a.name} · ${a.type}` : a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '', depth })),
     ...parsePs(ps, panes, Number(me) || undefined, stdins),
   ]
-  // 서브에이전트 기록은 패널이 열려 있을 때만 읽는다 — 도구 호출마다 도는 곳이다
-  if (paneOpen ?? (await $.ui.panes().catch(() => [])).some(x => x.id === AGENTS))
+  // 대화 기록은 패널이 열려 있을 때만 읽는다 — 도구 호출마다 도는 곳이다
+  if (paneOpen ?? (await $.ui.panes().catch(() => [])).some(x => x.id === AGENTS)) {
     for (const a of list) {
       if (!a.id) continue
       const s = spawned.get(a.id)
       a.detail = [...(s ? [`모델 ${s.model}${s.bg ? ' · 백그라운드' : ''}`, `지시 ${clean(s.prompt, 300)}`] : []), ...await agentDetail($, a.id)]
     }
+    const chunks = await outerTranscripts($, list.filter(a => a.pid && a.kind), t)
+    // 명령줄(마지막 줄) 앞에 끼운다
+    for (const a of list) {
+      const more = a.pid ? transcriptDetail(chunks.get(a.pid) ?? '') : []
+      if (more.length && a.detail) a.detail = [...a.detail.slice(0, -1), ...more, ...a.detail.slice(-1)]
+    }
+  }
   await update($, agents, () => list)
   return list
 }
@@ -653,8 +762,8 @@ export const register: Register = on => {
           <Box flexDirection="column" marginBottom={1}>
             <Text bold>{who} {gs.length}</Text>
             {gs.map(g => (
-              <Box flexDirection="column" paddingLeft={2}>
-                <Text wrap="truncate-end">{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
+              <Box flexDirection="column" paddingLeft={2 + (g.depth ?? 0) * 2}>
+                <Text wrap="truncate-end">{g.depth ? '└ ' : ''}{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
                 <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}{g.now ? ` · 지금 ${g.now}` : ''}</Text>
                 {(g.detail ?? []).map(d => <Text wrap={/^(지시|말) /.test(d) ? 'wrap' : 'truncate-end'}>  {d}</Text>)}
               </Box>

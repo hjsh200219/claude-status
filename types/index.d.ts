@@ -6,7 +6,7 @@ declare module 'claude-code' {
       summary: string
       prompts: string[]
       hidden: boolean
-      agents: { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[] }[]
+      agents: { who: string; name: string; desc: string; age: string; lane: string; id?: string; now?: string; detail?: string[]; pid?: number; kind?: 'claude' | 'codex'; sec?: number; sid?: string; depth?: number }[]
     }
   }
 }

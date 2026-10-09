@@ -1,5 +1,5 @@
 import { test, expect, mock } from 'claude-code/testing'
-import { actOf, editWarning, parsePs, subcommand, taskLine } from './register'
+import { actOf, editWarning, parsePs, resultOf, subcommand, taskLine, transcriptDetail } from './register'
 
 const out = (stdout: string, exitCode = 0) => ({ exitCode, stdout, stderr: '', isStdoutTruncated: false, isStderrTruncated: false })
 const CFG = '/h/.claude'
@@ -219,8 +219,9 @@ test('에이전트 감지: 이 세션의 edb-p·delegate codex exec·맨 claude 
   ].join('\n')
   const panes = '100 DevOps1\n700 DevOps2\n'
   expect(parsePs(ps, panes).map(a => a.lane)).toContain('DevOps2')
-  expect(parsePs(ps, panes, 100)[0]?.detail).toEqual(['pid 202', 'python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘'])
-  expect(parsePs(ps, panes, 100).map(({ detail, ...a }) => a)).toEqual([
+  // 위임 안의 위임(203)은 따로 세지 않고 「지금」으로 보인다
+  expect(parsePs(ps, panes, 100)[0]?.detail).toEqual(['pid 202', '지금 /x/claude-fixed/claude -p 하위 작업 · 5분', 'python3 /h/.local/bin/edb-p 필첵 PRD 검토해줘'])
+  expect(parsePs(ps, panes, 100).map(({ detail, pid, kind, sec, ...a }) => a)).toEqual([
     { who: 'edb', name: 'edb-p', desc: '필첵 PRD 검토해줘', age: '11분', lane: 'DevOps1' },
     { who: 'codex', name: 'delegate', desc: 'pillcheck-app', age: '2분', lane: 'DevOps1' },
     { who: 'claude', name: 'claude -p', desc: '이 함수 테스트 써줘 --permission-mode bypassPermissions', age: '방금', lane: 'DevOps1' },
@@ -323,9 +324,76 @@ test('에이전트 감지: 셸 별칭이 붙인 codex --yolo exec 도 잡는다'
     '  501   500    04:41 /h/.local/bin/codex --yolo exec -C /h/workspace/meta-plan -s workspace-write -m gpt-6-astra -c model_reasoning_effort=high -',
     '  600     1    10:00 /h/.local/bin/codex --yolo resume',
   ].join('\n')
-  expect(parsePs(ps, '100 DevOps1\n', 100).map(({ detail, ...a }) => a)).toEqual([
-    { who: 'codex', name: 'exec', desc: 'meta-plan', age: '4분', lane: 'DevOps1' },
+  const [a] = parsePs(ps, '100 DevOps1\n', 100)
+  expect(a && (({ detail, pid, kind, sec, ...x }) => x)(a)).toEqual({ who: 'codex', name: 'exec', desc: 'meta-plan', age: '4분', lane: 'DevOps1' })
+  expect(a?.detail?.[0]).toBe('pid 501 · 모델 gpt-6-astra · 위치 /h/workspace/meta-plan')
+})
+
+test('바깥 위임: 10초 넘어 띄운 가장 새 자식을 「지금」으로, 시작 직후 뜬 MCP 서버는 뺀다 · 긴 작업은 「지시」로', () => {
+  const ps = [
+    '  100     1 05:00:00 /x/claude --resume abc',
+    '  200   100    03:00 python3 /h/.local/bin/edb-p',
+    '  201   200    03:00 /x/claude-fixed/claude -p --output-format stream-json --model opus',
+    '  300   100    01:00 /x/claude-fixed/claude -p git commit -m fix 해줘',               // 작업 원문의 -m 은 모델 아님
+    '  202   201    02:58 node /h/mcp/server.js',                                          // 시작 직후 → 뺌
+    '  203   201    00:40 /bin/zsh -c source /h/.claude/shell-snapshots/s.sh && eval npm test',
+    '  204   203    00:39 npm test',
+  ].join('\n')
+  const long = '사용자 지시: ' + '가'.repeat(80)
+  expect(parsePs(ps, '', 100, new Map([[200, long]]))[0]?.detail?.slice(0, 3)).toEqual([
+    'pid 201 · 모델 opus', `지시 ${'가'.repeat(80)}`, '지금 npm test · 방금',
   ])
+  expect(parsePs(ps, '', 100)[1]?.detail?.[0]).toBe('pid 300')
+})
+
+test('resultOf — 실패는 이유, 성공은 첫 줄(+남은 줄), Read 는 줄 수', () => {
+  expect(resultOf({ tool: 'Bash', input: {}, text: 'a\nb\nc', done: true })).toBe('a (+2줄)')
+  expect(resultOf({ tool: 'Read', input: {}, text: '1\tx\n2\ty', done: true })).toBe('2줄')
+  expect(resultOf({ tool: 'Bash', input: {}, text: 'Exit 1\nboom', isError: true, done: true })).toBe('Exit 1 boom')
+  expect(resultOf({ tool: 'exec_command', input: {}, text: 'Script completed\nWall time 0.2 seconds\nOutput:\nok', done: true })).toBe('ok')
+  expect(resultOf({ tool: 'Grep', input: {}, done: false })).toBe('')
+})
+
+test('transcriptDetail — Claude 기록과 Codex rollout 끝부분에서 말·도구·결과', () => {
+  const claude = [
+    '{"type":"assistant","message":{"content":[{"type":"text', // 잘린 첫 줄
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: '테스트를 돌립니다' }, { type: 'tool_use', id: 'u1', name: 'Bash', input: { command: 'npm test' } }] } }),
+    JSON.stringify({ type: 'user', message: { content: [{ type: 'tool_result', tool_use_id: 'u1', content: [{ type: 'text', text: '3 passed\ndone' }] }] } }),
+    JSON.stringify({ type: 'assistant', message: { content: [{ type: 'tool_use', id: 'u2', name: 'Read', input: { file_path: '/x/a.ts' } }] } }),
+  ].join('\n')
+  expect(transcriptDetail(claude)).toEqual(['말 테스트를 돌립니다', '✓ Bash npm test → 3 passed (+1줄)', '… Read a.ts', '도구 2번(최근 기록)'])
+  const codex = [
+    JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call', call_id: 'c1', name: 'exec', input: 'text(await tools.exec_command({cmd:"git status \\"x\\""}))' } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'custom_tool_call_output', call_id: 'c1', output: [{ type: 'input_text', text: 'Script completed\nOutput:\n' }, { type: 'input_text', text: 'clean' }] } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'function_call', call_id: 'c2', name: 'shell', arguments: '{"cmd":"ls"}' } }),
+    JSON.stringify({ type: 'response_item', payload: { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: '정리했습니다' }] } }),
+  ].join('\n')
+  expect(transcriptDetail(codex)).toEqual(['말 정리했습니다', '✓ exec_command git status x → clean', '… shell ls', '도구 2번(최근 기록)'])
+  expect(transcriptDetail('not json')).toEqual([])
+})
+
+test('/workers 는 서브에이전트가 띄운 서브에이전트를 부모 아래 들여 쓴다', async ($, on) => {
+  const g = world()
+  g.install(on)
+  let panes: { id: string }[] = []
+  on('ui.panes', () => ({ value: panes }))
+  on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
+  on('ui.close', () => { panes = []; return { value: undefined } })
+  on('agent.list', () => ({ value: [
+    { id: 'c1', type: 'Explore', description: '자식 검색', status: 'running', parentId: 'p1' },
+    { id: 'p1', type: 'executor', description: '부모 작업', status: 'running' },
+    { id: 'o1', type: 'Plan', description: '부모 끝난 고아', status: 'running', parentId: 'gone' },
+    { id: 'x1', type: 'Plan', description: '고리 작업', status: 'running', parentId: 'x1' },
+  ] }))
+  on('session.messages', () => ({ value: [] }))
+  await status($, on)
+  await $.command.run({ command: 'workers', args: '' } as any)
+  for (const surface of ['terminal', 'desktop'] as const) {
+    const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
+    const lines = (await ui.findAll({ type: 'Text', text: /작업|검색|고아/ })).map((t: any) => t.text)
+    expect(lines).toEqual(['executor · 부모 작업', '└ Explore · 자식 검색', 'Plan · 부모 끝난 고아', 'Plan · 고리 작업'])
+    await ui.unmount()
+  }
 })
 
 const BAND = { component: 'AbovePrompt', props: { hasSurvey: false, isWorking: false, maxRows: 5 } } as const
