@@ -56,13 +56,15 @@ const hidden = atom({ plugin: 'meta-status', key: 'hidden' } as const, false)
 const KICK_EVERY = 30 // 초
 let lastKick = 0
 const doing = new Map<string, { now: string; n: number }>() // 서브에이전트 id → 마지막 도구 호출 · 몇 번째
+// 서브에이전트 id → 띄울 때 정해진 모델·지시 원문·백그라운드 여부(agent.spawn 에서만 보인다 · 훅 워커가 새로 뜨면 비어 그 줄만 빠진다)
+const spawned = new Map<string, { model: string; prompt: string; bg: boolean }>()
 // 도는 도구 호출 수 — 하나라도 돌면 SCAN_EVERY 마다 에이전트를 다시 읽는다
 const SCAN_EVERY = 15_000 // ms
 let running = 0
 let ticker: { cancel: () => void } | undefined
 const stopTicker = () => { ticker?.cancel(); ticker = undefined; running = 0 }
 
-// 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패 · … 도는 중) · 총 횟수
+// 서브에이전트 대화 기록에서: 마지막으로 한 말 · 최근 도구 5개(✓ 끝 · ✗ 실패와 그 이유 · … 도는 중) · 총 횟수
 async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
   const ms = await $.session.messages({ agentId: id }).catch(() => undefined)
   if (!Array.isArray(ms)) return []
@@ -71,8 +73,8 @@ async function agentDetail($: EngineInterface, id: string): Promise<string[]> {
   const mark = (u: (typeof uses)[number]) => (u.isError ? '✗' : 'text' in u || 'result' in u ? '✓' : '…')
   const secs = (ms: number) => (ms < 1000 ? `${ms}ms` : `${Math.round(ms / 100) / 10}초`)
   return [
-    ...(said ? [`말 ${clean(said, 120)}`] : []),
-    ...uses.slice(-5).map(u => `${mark(u)} ${actOf(u.tool, u.input)}${u.durationMs ? ` ${secs(u.durationMs)}` : ''}`),
+    ...(said ? [`말 ${clean(said, 300)}`] : []),
+    ...uses.slice(-5).map(u => `${mark(u)} ${actOf(u.tool, u.input)}${u.durationMs ? ` ${secs(u.durationMs)}` : ''}${u.isError && u.text ? ` → ${clean(u.text, 60)}` : ''}`),
     `도구 ${uses.length}번 · 메시지 ${ms.length}개`,
   ]
 }
@@ -396,15 +398,19 @@ async function scanAgents($: EngineInterface, paneOpen?: boolean) {
   // 이 세션의 서브에이전트 — 레인 계정은 HUD 가 남긴 기록(없으면 claude)
   const mine = (await $.agent.list().catch(() => [])).filter(a => ['running', 'pending', 'waiting'].includes(a.status))
   for (const a of mine) if (!firstSeen.has(a.id)) firstSeen.set(a.id, t)
-  for (const id of doing.keys()) if (!mine.some(a => a.id === id)) doing.delete(id)
+  for (const m of [doing, spawned]) for (const id of m.keys()) if (!mine.some(a => a.id === id)) m.delete(id)
   const who = acct.trim().split(/\s+/)[0] || 'claude'
   const list: Agent[] = [
-    ...mine.map(a => ({ who, name: a.name || a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
+    ...mine.map(a => ({ who, name: a.name ? `${a.name} · ${a.type}` : a.type, desc: clean(a.description, 60), age: ageOf(`${Math.floor((t - (firstSeen.get(a.id) ?? t)) / 60)}:00`), lane: '이 세션', id: a.id, now: doing.get(a.id)?.now ?? '' })),
     ...parsePs(ps, panes, Number(me) || undefined, stdins),
   ]
   // 서브에이전트 기록은 패널이 열려 있을 때만 읽는다 — 도구 호출마다 도는 곳이다
   if (paneOpen ?? (await $.ui.panes().catch(() => [])).some(x => x.id === AGENTS))
-    for (const a of list) if (a.id) a.detail = await agentDetail($, a.id)
+    for (const a of list) {
+      if (!a.id) continue
+      const s = spawned.get(a.id)
+      a.detail = [...(s ? [`모델 ${s.model}${s.bg ? ' · 백그라운드' : ''}`, `지시 ${clean(s.prompt, 300)}`] : []), ...await agentDetail($, a.id)]
+    }
   await update($, agents, () => list)
   return list
 }
@@ -469,7 +475,8 @@ async function toggleAgents($: EngineInterface) {
   }
   const list = await scanAgents($, true)
   const n = list.length
-  const want = n * 2 + list.reduce((k, a) => k + (a.detail?.length ?? 0), 0) + new Set(list.map(a => a.who)).size * 2 + 2
+  // 지시·말 줄은 접혀 몇 줄 더 차지한다
+  const want = n * 2 + list.reduce((k, a) => k + (a.detail?.length ?? 0) + (a.detail?.filter(d => /^(지시|말) /.test(d)).length ?? 0) * 2, 0) + new Set(list.map(a => a.who)).size * 2 + 2
   await $.ui.open({ id: AGENTS, title: `에이전트 ${n}`, closeOnEscape: true, rows: Math.min(40, want) })
   return `에이전트 ${n}개 — /workers 다시 입력하면 닫힘`
 }
@@ -524,7 +531,7 @@ export const register: Register = on => {
     await $.command.register({ name: 'where', description: '현재 repo·브랜치·열린 일' })
     await $.command.register({ name: 'meta-status', description: '입력창 위 meta-status 줄 켜기·끄기(이 레인만)', argumentHint: 'on | off' })
     await $.command.register({ name: 'prompts', description: '이 세션에서 입력한 프롬프트 패널 열기·닫기(입력창 위 요약을 눌러도 됨)' })
-    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기(마지막 말·최근 도구까지)' })
+    await $.command.register({ name: 'workers', description: '지금 도는 에이전트(서브에이전트·edb-p·delegate·codex exec) 패널 열기·닫기(모델·지시·마지막 말·최근 도구까지)' })
     await $.command.register({ name: 'loops', description: '열린 일 목록을 옆 패널로 · add <키> <내용> · close <키>', argumentHint: '[add <키> <내용> | close <키>]' })
     await $.tool.register({
       name: 'open_loop_add',
@@ -648,7 +655,7 @@ export const register: Register = on => {
               <Box flexDirection="column" paddingLeft={2}>
                 <Text wrap="truncate-end">{g.name}{g.desc ? ` · ${g.desc}` : ''}</Text>
                 <Text dimColor wrap="truncate-end">{g.age}{g.lane ? ` · ${g.lane}` : ''}{g.now ? ` · 지금 ${g.now}` : ''}</Text>
-                {(g.detail ?? []).map(d => <Text wrap="truncate-end">  {d}</Text>)}
+                {(g.detail ?? []).map(d => <Text wrap={/^(지시|말) /.test(d) ? 'wrap' : 'truncate-end'}>  {d}</Text>)}
               </Box>
             ))}
           </Box>
@@ -671,6 +678,14 @@ export const register: Register = on => {
       await scanAgents($).catch(() => undefined)
     }
   }).catch(($, e, next) => next(e))
+
+  // 서브에이전트가 뜰 때 모델·지시 원문을 적어 둔다 — $.agent.list() 엔 몇 낱말 설명만 있다
+  // next 를 다시 부르면 두 번 뜨므로 .catch 로 감싸지 않는다(Map 에 넣기만 해 던질 곳이 없다)
+  on('agent.spawn', async ($, e, next) => {
+    const r = await next(e)
+    if ('agentId' in r && r.agentId) spawned.set(r.agentId, { model: r.model, prompt: e.prompt, bg: e.background })
+    return r
+  })
 
   on('ui.render', { component: 'Pane', requestId: PANE }, async ($, e) => {
     const { Box, Text } = $.ui.resolve(e)

@@ -280,27 +280,29 @@ test('서브에이전트가 도구를 부르면 패널 줄에 「지금」이 �
   }
 })
 
-test('/workers 는 마지막 말·최근 도구(✓✗…)·횟수를 보인다', async ($, on) => {
+test('/workers 는 이름·종류·모델·지시·마지막 말·최근 도구(✓✗ 실패 이유…)·횟수를 보인다', async ($, on) => {
   const g = world()
   g.install(on)
   let panes: { id: string }[] = []
   on('ui.panes', () => ({ value: panes }))
   on('ui.open', ($: any, e: any) => { panes = [{ id: e.id }]; return { value: { isPlaced: true } } })
   on('ui.close', () => { panes = []; return { value: undefined } })
-  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', description: '테스트 보강', status: 'running' }] }))
+  on('agent.list', () => ({ value: [{ id: 'a1', type: 'executor', name: 'fixer', description: '테스트 보강', status: 'running' }] }))
+  on('agent.spawn', () => ({ model: 'claude-sonnet-5-5', agentId: 'a1' }))
   on('session.messages', () => ({ value: [
     { role: 'assistant', text: '먼저 파일을 읽겠습니다', toolUses: [
       { tool_use_id: 't1', tool: 'Read', input: { file_path: '/x/a.ts' }, text: 'ok', durationMs: 300 },
-      { tool_use_id: 't2', tool: 'Bash', input: { command: 'npm test' }, text: 'fail', isError: true, durationMs: 2500 },
+      { tool_use_id: 't2', tool: 'Bash', input: { command: 'npm test' }, text: 'Exit code 1\nexpected 200, got 401', isError: true, durationMs: 2500 },
     ] },
     { role: 'user', text: '', toolUses: [] },
     { role: 'assistant', text: '테스트가 깨져서 원인을 찾습니다', toolUses: [{ tool_use_id: 't3', tool: 'Grep', input: { pattern: 'foo' } }] },
   ] }))
   await status($, on)
+  await $.agent.spawn({ prompt: 'auth.spec.ts 의\n실패 원인을 찾아 고쳐라', description: '테스트 보강', subagentType: 'executor', background: true } as any)
   await $.command.run({ command: 'workers', args: '' } as any)
   for (const surface of ['terminal', 'desktop'] as const) {
     const ui = await ($.ui as any).mount({ plugin: 'meta-status', surface, component: 'Pane', props: {}, requestId: 'agents' })
-    for (const line of ['말 테스트가 깨져서 원인을 찾습니다', '✓ Read a.ts 300ms', '✗ Bash npm test 2.5초', '… Grep foo', '도구 3번 · 메시지 3개'])
+    for (const line of ['fixer · executor · 테스트 보강', '모델 claude-sonnet-5-5 · 백그라운드', '지시 auth.spec.ts 의 실패 원인을 찾아 고쳐라', '말 테스트가 깨져서 원인을 찾습니다', '✓ Read a.ts 300ms', '✗ Bash npm test 2.5초 → Exit code 1 expected 200, got 401', '… Grep foo', '도구 3번 · 메시지 3개'])
       expect(await ui.find({ type: 'Text', text: new RegExp(line.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')) })).toBeDefined()
     await ui.unmount()
   }
